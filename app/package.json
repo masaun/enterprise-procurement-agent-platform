@@ -1,0 +1,38 @@
+{
+  "name": "agentic-commerce",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Use case #4 - Enterprise procurement agent: Lucid Agents SDK (who to buy from) + KeeperHub (how to execute)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@keeperhub/sdk": "^0.1.1",
+    "@lucid-agents/a2a": "^2.0.0",
+    "@lucid-agents/ap2": "^0.4.6",
+    "@lucid-agents/core": "^5.0.0",
+    "@lucid-agents/http": "^4.0.0",
+    "@lucid-agents/identity": "^5.0.0",
+    "@lucid-agents/payments": "^5.0.0",
+    "@lucid-agents/types": "^3.0.0",
+    "@lucid-agents/wallet": "^0.6.6",
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "next": "^16.3.5",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "viem": "2.55.8",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.0"
+  },
+  "overrides": {
+    "thirdweb": "file:./vendor/thirdweb-stub"
+  }
+}

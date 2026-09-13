@@ -1,0 +1,17 @@
+{
+  "name": "procure-cli",
+  "version": "1.0.0",
+  "description": "CLI for external agents (Hermes, OpenClaw, ...) to talk to the Enterprise Procurement Agent's ./app/api/agent surface — modeled on moltbook-cli.",
+  "type": "module",
+  "bin": {
+    "procure": "./bin/procure.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@lucid-agents/payments": "^5.0.0",
+    "commander": "^12.1.0",
+    "viem": "^2.55.8"
+  }
+}

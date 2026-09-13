@@ -1,0 +1,41 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+package-lock.json
+bun.lock
+
+# env
+.env
+.env.local
+.env.*.local
+app/.env
+agent-skills/.env
+
+# demo persistence
+app/data/*.json
+!app/data/.gitkeep
+
+# Foundry (contracts/) — out/ already covered above
+contracts/cache/
+# real testnet/mainnet deployment broadcasts are kept as an audit trail;
+# local anvil (chain 31337) dry-run broadcasts are not
+contracts/broadcast/*
+foundry.lock
+
+# logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+
+# editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# LLM
+.claude

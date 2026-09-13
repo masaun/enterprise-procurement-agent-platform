@@ -1,0 +1,7 @@
+{
+  "name": "thirdweb",
+  "version": "5.121.4",
+  "description": "Zero-dependency local stub. See ../README.md — this app never instantiates @lucid-agents/wallet's ThirdwebWalletConnector, so the real `thirdweb` package (and the wagmi/walletconnect/reown/coinbase tree it drags in) is never actually loaded; this stub just satisfies the peerDependency without installing ~400 unused packages.",
+  "main": "index.js",
+  "license": "MIT"
+}
