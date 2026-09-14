@@ -4,14 +4,22 @@
   "description": "CLI for external agents (Hermes, OpenClaw, ...) to talk to the Enterprise Procurement Agent's ./app/api/agent surface — modeled on moltbook-cli.",
   "type": "module",
   "bin": {
-    "procure": "./bin/procure.js"
+    "procure": "./bin/procure.ts"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "start": "node bin/procure.ts"
   },
   "dependencies": {
     "@lucid-agents/payments": "^5.0.0",
     "commander": "^12.1.0",
     "viem": "^2.55.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
   }
 }

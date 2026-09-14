@@ -1,6 +1,8 @@
-import { buildSiwxFetch } from "./siwx.js";
+import { buildSiwxFetch } from "./siwx.ts";
+import type { CliConfig } from "./config.ts";
+import type { Address } from "viem";
 
-async function asJson(response) {
+async function asJson(response: Response): Promise<any> {
   const text = await response.text();
   try {
     return JSON.parse(text);
@@ -9,12 +11,12 @@ async function asJson(response) {
   }
 }
 
-export async function getHealth(config) {
+export async function getHealth(config: CliConfig): Promise<any> {
   const res = await fetch(`${config.baseUrl}/api/health`);
   return asJson(res);
 }
 
-export async function getAgentCard(config, providerId) {
+export async function getAgentCard(config: CliConfig, providerId?: string): Promise<any> {
   const path = providerId
     ? `/api/mock-providers/${providerId}/.well-known/agent-card.json`
     : `/api/agent/.well-known/agent-card.json`;
@@ -22,16 +24,21 @@ export async function getAgentCard(config, providerId) {
   return asJson(res);
 }
 
-async function invoke(config, key, input = {}, { siwx = false } = {}) {
+async function invoke(
+  config: CliConfig,
+  key: string,
+  input: Record<string, unknown> = {},
+  { siwx = false }: { siwx?: boolean } = {},
+): Promise<any> {
   const url = `${config.baseUrl}/api/agent/entrypoints/${key}/invoke`;
-  const init = {
+  const init: RequestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ input }),
   };
 
-  let fetchImpl = fetch;
-  let address;
+  let fetchImpl: typeof fetch = fetch;
+  let address: Address | undefined;
   if (siwx) {
     const bound = buildSiwxFetch(config);
     fetchImpl = bound.fetch;
@@ -47,31 +54,31 @@ async function invoke(config, key, input = {}, { siwx = false } = {}) {
   return { ...body, _signerAddress: address };
 }
 
-export async function discoverProviders(config) {
+export async function discoverProviders(config: CliConfig): Promise<any> {
   return invoke(config, "discover");
 }
 
-export async function getPolicy(config) {
+export async function getPolicy(config: CliConfig): Promise<any> {
   return invoke(config, "policy");
 }
 
-export async function authenticate(config) {
+export async function authenticate(config: CliConfig): Promise<any> {
   return invoke(config, "authenticate", {}, { siwx: true });
 }
 
-export async function submitProcurement(config, request) {
+export async function submitProcurement(config: CliConfig, request: Record<string, unknown>): Promise<any> {
   return invoke(config, "procure", request, { siwx: true });
 }
 
-export async function getTaskStatus(config, taskId) {
+export async function getTaskStatus(config: CliConfig, taskId: string): Promise<any> {
   return invoke(config, "procurement_status", { taskId });
 }
 
-export async function callMcpTool(config, toolName, args) {
-  const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+export async function callMcpTool(config: CliConfig, toolName: string, args: Record<string, unknown>): Promise<any> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
   if (config.mcpApiKey) headers.Authorization = `Bearer ${config.mcpApiKey}`;
 
-  const call = async (body) => {
+  const call = async (body: Record<string, unknown>): Promise<any> => {
     const res = await fetch(`${config.baseUrl}/api/agent/mcp`, { method: "POST", headers, body: JSON.stringify(body) });
     const text = await res.text();
     const line = text.split("\n").find((l) => l.startsWith("data:"));

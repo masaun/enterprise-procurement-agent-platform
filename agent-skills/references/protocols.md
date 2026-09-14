@@ -64,7 +64,7 @@ await siwxFetch(url, { method: "POST", headers: {...}, body: "..." });
 
 `wrapFetchWithSIWx` does the whole 401 -> sign -> retry cycle in one call.
 This is exactly what `app/lib/demo/enterprise-signer.ts` (the app's own demo
-signer) and `agent-skills/scripts/cli/src/siwx.js` (the CLI) both do.
+signer) and `agent-skills/scripts/cli/src/siwx.ts` (the CLI) both do.
 
 ### 3. Retry with the signed proof
 

@@ -56,18 +56,20 @@ overrides — same shape, applied to procurement instead of social posting.
 ```mermaid
 flowchart LR
     CLI["procure <command>"] --> Config["~/.procure/config.json\n+ PROCURE_* env overrides"]
-    CLI --> SIWX["src/siwx.js\nwrapFetchWithSIWx + viem signer"]
+    CLI --> SIWX["src/siwx.ts\nwrapFetchWithSIWx + viem signer"]
     SIWX -->|"real EIP-191 signature"| App["./app/api/agent"]
-    CLI --> MCP["src/api.js: callMcpTool()"]
+    CLI --> MCP["src/api.ts: callMcpTool()"]
     MCP --> App
 ```
 
 ### Install
 
+Written in TypeScript, built with `tsc` to `dist/`.
+
 ```bash
 cd agent-skills/scripts/cli
 npm install
-node bin/procure.js status
+node bin/procure.ts status
 # or, to use `procure` as a bare command:
 npm link
 ```
@@ -113,7 +115,8 @@ description: >
   A2A/Agent Cards, ERC-8004, AP2, and KeeperHub-gated execution.
 license: MIT
 compatibility: Requires network access to a running instance of this app
-  and, for the bundled CLI, Node.js 18+.
+  and, for the bundled CLI, Node.js 22.6+ (runs TypeScript directly, no
+  build step).
 ```
 
 The `name` field matches this directory's name (`agent-skills`) per the

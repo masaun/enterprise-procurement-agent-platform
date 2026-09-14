@@ -8,17 +8,25 @@ command but not easily craft raw HTTP/SIWX calls itself. See
 
 Every command below is paired with the raw `curl` call it is equivalent to,
 so you can bypass the CLI entirely if your agent framework only shells out
-to plain HTTP. Both hit the exact same underlying logic — see `src/api.js`.
+to plain HTTP. Both hit the exact same underlying logic — see `src/api.ts`.
 
 ## Install
+
+Written in TypeScript and run directly by Node's built-in TypeScript
+support (no `tsc` build step, no `ts-node`/`tsx`) — requires **Node ≥22.6**.
+Relative imports use explicit `.ts` extensions (`allowImportingTsExtensions`
+in `tsconfig.json`) so Node's native loader can resolve them as-is.
 
 ```bash
 cd agent-skills/scripts/cli
 npm install
-node bin/procure.js status
+node bin/procure.ts status
 # or, to use `procure` as a bare command:
 npm link
 ```
+
+Edits to `bin/*.ts` or `src/*.ts` take effect immediately — there is nothing
+to rebuild. Run `npm run typecheck` to type-check without emitting anything.
 
 ## Configuration
 
@@ -118,7 +126,7 @@ curl -s -X POST "$BASE_URL/api/agent/entrypoints/authenticate/invoke" \
 ```
 
 There's no `curl`-only way to produce that signature — `procure auth` (and
-`src/siwx.js`'s `wrapFetchWithSIWx`) exist specifically to do the
+`src/siwx.ts`'s `wrapFetchWithSIWx`) exist specifically to do the
 challenge -> sign -> retry cycle for you with a real `viem` signer.
 
 ### `procure submit --instruction <text> --amount <n> [--asset USDC] [--min-apy 4.0] [--protocol <name...>]`
@@ -160,7 +168,7 @@ curl -s -X POST "$BASE_URL/api/agent/entrypoints/procurement_status/invoke" \
 
 Calls a tool on `/api/agent/mcp` directly. The server is stateless
 (no session id), but each call still does the standard MCP `initialize`
-handshake before `tools/call`, exactly as `src/api.js`'s `callMcpTool` does:
+handshake before `tools/call`, exactly as `src/api.ts`'s `callMcpTool` does:
 
 ```bash
 procure mcp-call get_policy '{}'
@@ -181,7 +189,7 @@ curl -s -X POST "$BASE_URL/api/agent/mcp" \
 Add `-H "Authorization: Bearer $PROCURE_MCP_API_KEY"` to both calls if the
 server enforces `AGENT_MCP_API_KEY`. The response may come back
 SSE-shaped — look for a `data: {...}` line and `JSON.parse` its payload, the
-same way `src/api.js` does.
+same way `src/api.ts` does.
 
 ### `procure config get` / `procure config set <key> <value>`
 
