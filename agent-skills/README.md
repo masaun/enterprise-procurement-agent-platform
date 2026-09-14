@@ -68,8 +68,8 @@ Written in TypeScript, built with `tsc` to `dist/`.
 
 ```bash
 cd agent-skills/scripts/cli
-npm install      # runs `npm run build` via the `prepare` script
-node dist/bin/procure.js status
+npm install
+node bin/procure.ts status
 # or, to use `procure` as a bare command:
 npm link
 ```
@@ -115,7 +115,8 @@ description: >
   A2A/Agent Cards, ERC-8004, AP2, and KeeperHub-gated execution.
 license: MIT
 compatibility: Requires network access to a running instance of this app
-  and, for the bundled CLI, Node.js 18+.
+  and, for the bundled CLI, Node.js 22.6+ (runs TypeScript directly, no
+  build step).
 ```
 
 The `name` field matches this directory's name (`agent-skills`) per the

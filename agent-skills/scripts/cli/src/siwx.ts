@@ -1,7 +1,7 @@
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { wrapFetchWithSIWx, type SIWxSigner } from "@lucid-agents/payments";
 import type { Address, Hex } from "viem";
-import type { CliConfig } from "./config.js";
+import type { CliConfig } from "./config.ts";
 
 export interface SiwxFetchBinding {
   fetch: typeof fetch;

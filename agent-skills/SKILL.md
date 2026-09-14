@@ -2,7 +2,7 @@
 name: agent-skills
 description: Teaches an external enterprise agent (e.g. Hermes Agent, OpenClaw, or any A2A/MCP-capable agent) how to buy blockchain services through the Enterprise Procurement Agent at ./app/api/agent — SIWX wallet authentication, A2A/Agent Card discovery, ERC-8004 identity, AP2 commerce metadata, and KeeperHub-gated execution. Use this skill whenever the user asks to move treasury funds into a DeFi protocol, discover yield/service providers, check a procurement task's status, or otherwise act as the "Enterprise" in the procurement workflow.
 license: MIT
-compatibility: Requires network access to a running instance of this app (default http://localhost:3000) and, for the bundled CLI, Node.js 18+.
+compatibility: Requires network access to a running instance of this app (default http://localhost:3000) and, for the bundled CLI, Node.js 22.6+ (runs TypeScript directly, no build step).
 metadata:
   author: agentic-commerce-demo
   version: "1.0"
@@ -189,7 +189,7 @@ Body: `{ "input": { "taskId": "..." } }`, or `procure task <taskId>`.
 
 ```bash
 cd agent-skills/scripts/cli && npm install
-node dist/bin/procure.js status
+node bin/procure.ts status
 ```
 
 See [`scripts/cli/README.md`](scripts/cli/README.md) and `agent-skills/README.md`

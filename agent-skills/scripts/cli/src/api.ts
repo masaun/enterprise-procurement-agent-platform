@@ -1,5 +1,5 @@
-import { buildSiwxFetch } from "./siwx.js";
-import type { CliConfig } from "./config.js";
+import { buildSiwxFetch } from "./siwx.ts";
+import type { CliConfig } from "./config.ts";
 import type { Address } from "viem";
 
 async function asJson(response: Response): Promise<any> {

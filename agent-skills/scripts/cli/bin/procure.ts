@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { Command } from "commander";
-import { loadConfig, setConfigValue, configPath } from "../src/config.js";
-import * as api from "../src/api.js";
+import { loadConfig, setConfigValue, configPath } from "../src/config.ts";
+import * as api from "../src/api.ts";
 
 const program = new Command();
 

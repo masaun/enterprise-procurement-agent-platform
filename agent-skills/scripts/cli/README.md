@@ -12,17 +12,21 @@ to plain HTTP. Both hit the exact same underlying logic — see `src/api.ts`.
 
 ## Install
 
-Written in TypeScript, built with `tsc` to `dist/`.
+Written in TypeScript and run directly by Node's built-in TypeScript
+support (no `tsc` build step, no `ts-node`/`tsx`) — requires **Node ≥22.6**.
+Relative imports use explicit `.ts` extensions (`allowImportingTsExtensions`
+in `tsconfig.json`) so Node's native loader can resolve them as-is.
 
 ```bash
 cd agent-skills/scripts/cli
-npm install      # runs `npm run build` via the `prepare` script
-node dist/bin/procure.js status
+npm install
+node bin/procure.ts status
 # or, to use `procure` as a bare command:
 npm link
 ```
 
-After editing `bin/*.ts` or `src/*.ts`, rebuild with `npm run build`.
+Edits to `bin/*.ts` or `src/*.ts` take effect immediately — there is nothing
+to rebuild. Run `npm run typecheck` to type-check without emitting anything.
 
 ## Configuration
 
