@@ -189,7 +189,7 @@ Body: `{ "input": { "taskId": "..." } }`, or `procure task <taskId>`.
 
 ```bash
 cd agent-skills/scripts/cli && npm install
-node bin/procure.js status
+node dist/bin/procure.js status
 ```
 
 See [`scripts/cli/README.md`](scripts/cli/README.md) and `agent-skills/README.md`

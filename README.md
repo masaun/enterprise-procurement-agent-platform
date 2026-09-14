@@ -84,7 +84,7 @@ submit the example instruction. Or drive it as an agent would:
 ```bash
 curl http://localhost:3000/api/agent/.well-known/agent-card.json
 cd agent-skills/scripts/cli && npm install
-node bin/procure.js submit --instruction "Move 1M USDC to an approved lending protocol, but only if APY > 4%." --amount 1000000
+node dist/bin/procure.js submit --instruction "Move 1M USDC to an approved lending protocol, but only if APY > 4%." --amount 1000000
 ```
 
 ## Environment variables (consolidated)

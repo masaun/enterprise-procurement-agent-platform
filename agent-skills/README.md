@@ -56,18 +56,20 @@ overrides — same shape, applied to procurement instead of social posting.
 ```mermaid
 flowchart LR
     CLI["procure <command>"] --> Config["~/.procure/config.json\n+ PROCURE_* env overrides"]
-    CLI --> SIWX["src/siwx.js\nwrapFetchWithSIWx + viem signer"]
+    CLI --> SIWX["src/siwx.ts\nwrapFetchWithSIWx + viem signer"]
     SIWX -->|"real EIP-191 signature"| App["./app/api/agent"]
-    CLI --> MCP["src/api.js: callMcpTool()"]
+    CLI --> MCP["src/api.ts: callMcpTool()"]
     MCP --> App
 ```
 
 ### Install
 
+Written in TypeScript, built with `tsc` to `dist/`.
+
 ```bash
 cd agent-skills/scripts/cli
-npm install
-node bin/procure.js status
+npm install      # runs `npm run build` via the `prepare` script
+node dist/bin/procure.js status
 # or, to use `procure` as a bare command:
 npm link
 ```

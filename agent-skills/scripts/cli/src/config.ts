@@ -2,17 +2,23 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+export interface CliConfig {
+  baseUrl: string;
+  privateKey: string | null;
+  mcpApiKey: string | null;
+}
+
 const CONFIG_DIR = join(homedir(), ".procure");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
-const DEFAULTS = {
+const DEFAULTS: CliConfig = {
   baseUrl: "http://localhost:3000",
   privateKey: null,
   mcpApiKey: null,
 };
 
-export function loadConfig() {
-  let fileConfig = {};
+export function loadConfig(): CliConfig {
+  let fileConfig: Partial<CliConfig> = {};
   if (existsSync(CONFIG_FILE)) {
     try {
       fileConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
@@ -30,11 +36,11 @@ export function loadConfig() {
   };
 }
 
-export function setConfigValue(key, value) {
+export function setConfigValue(key: string, value: string): Record<string, unknown> {
   if (!(key in DEFAULTS)) {
     throw new Error(`Unknown config key "${key}". Valid keys: ${Object.keys(DEFAULTS).join(", ")}`);
   }
-  let fileConfig = {};
+  let fileConfig: Record<string, unknown> = {};
   if (existsSync(CONFIG_FILE)) {
     try {
       fileConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
@@ -48,6 +54,6 @@ export function setConfigValue(key, value) {
   return fileConfig;
 }
 
-export function configPath() {
+export function configPath(): string {
   return CONFIG_FILE;
 }

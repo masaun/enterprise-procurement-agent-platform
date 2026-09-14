@@ -8,17 +8,21 @@ command but not easily craft raw HTTP/SIWX calls itself. See
 
 Every command below is paired with the raw `curl` call it is equivalent to,
 so you can bypass the CLI entirely if your agent framework only shells out
-to plain HTTP. Both hit the exact same underlying logic — see `src/api.js`.
+to plain HTTP. Both hit the exact same underlying logic — see `src/api.ts`.
 
 ## Install
 
+Written in TypeScript, built with `tsc` to `dist/`.
+
 ```bash
 cd agent-skills/scripts/cli
-npm install
-node bin/procure.js status
+npm install      # runs `npm run build` via the `prepare` script
+node dist/bin/procure.js status
 # or, to use `procure` as a bare command:
 npm link
 ```
+
+After editing `bin/*.ts` or `src/*.ts`, rebuild with `npm run build`.
 
 ## Configuration
 
@@ -118,7 +122,7 @@ curl -s -X POST "$BASE_URL/api/agent/entrypoints/authenticate/invoke" \
 ```
 
 There's no `curl`-only way to produce that signature — `procure auth` (and
-`src/siwx.js`'s `wrapFetchWithSIWx`) exist specifically to do the
+`src/siwx.ts`'s `wrapFetchWithSIWx`) exist specifically to do the
 challenge -> sign -> retry cycle for you with a real `viem` signer.
 
 ### `procure submit --instruction <text> --amount <n> [--asset USDC] [--min-apy 4.0] [--protocol <name...>]`
@@ -160,7 +164,7 @@ curl -s -X POST "$BASE_URL/api/agent/entrypoints/procurement_status/invoke" \
 
 Calls a tool on `/api/agent/mcp` directly. The server is stateless
 (no session id), but each call still does the standard MCP `initialize`
-handshake before `tools/call`, exactly as `src/api.js`'s `callMcpTool` does:
+handshake before `tools/call`, exactly as `src/api.ts`'s `callMcpTool` does:
 
 ```bash
 procure mcp-call get_policy '{}'
@@ -181,7 +185,7 @@ curl -s -X POST "$BASE_URL/api/agent/mcp" \
 Add `-H "Authorization: Bearer $PROCURE_MCP_API_KEY"` to both calls if the
 server enforces `AGENT_MCP_API_KEY`. The response may come back
 SSE-shaped — look for a `data: {...}` line and `JSON.parse` its payload, the
-same way `src/api.js` does.
+same way `src/api.ts` does.
 
 ### `procure config get` / `procure config set <key> <value>`
 
