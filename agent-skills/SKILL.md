@@ -62,6 +62,13 @@ Returns an A2A Agent Card: this agent's skills (`authenticate`, `discover`,
 its AP2 `shopper` role declaration. Read `references/protocols.md` if you
 need to understand any of these fields.
 
+```bash
+procure card
+```
+
+> **Natural language (e.g. a human via Telegram):** "What can you do?" /
+> "Who are you and what's your agent card?" / "Show me your capabilities."
+
 ### 2. Authenticate the enterprise wallet (SIWX)
 
 ```
@@ -85,6 +92,9 @@ or, from your own TypeScript/JS code, use `@lucid-agents/payments`'s
 `wrapFetchWithSIWx(fetch, signer)` exactly as `app/lib/demo/enterprise-signer.ts`
 does in this repo — the CLI does the same thing.
 
+> **Natural language (e.g. a human via Telegram):** "Log in the treasury
+> wallet." / "Authenticate as the enterprise." / "Connect the wallet."
+
 ### 3. Discover candidate providers (A2A)
 
 ```
@@ -100,6 +110,9 @@ KeeperHub call**. Use this to preview before committing to `procure`.
 procure discover
 ```
 
+> **Natural language (e.g. a human via Telegram):** "What lending options are
+> available for USDC?" / "Show me yield providers." / "Who can we buy from?"
+
 ### 4. Check the policy you'll be held to (optional)
 
 ```
@@ -114,6 +127,10 @@ rejection to your user before it happens.
 ```bash
 procure policy
 ```
+
+> **Natural language (e.g. a human via Telegram):** "What's our spending
+> policy?" / "What's the max I can move and to which protocols?" / "What's
+> the minimum APY we require?"
 
 ### 5. Submit the procurement request
 
@@ -138,6 +155,12 @@ procure submit \
   --amount 1000000 --asset USDC --min-apy 4.0
 ```
 
+> **Natural language (e.g. a human via Telegram):** "Move 1,000,000 USDC to
+> an approved lending protocol, but only if APY > 4%." — that instruction
+> string is passed straight through as `--instruction` / `input.instruction`;
+> parse the amount, asset, and APY threshold out of the same message to fill
+> the other fields.
+
 Read `task.status`:
 - `completed` — executed. See `task.execution.transactionHash` / `executionId`.
 - `rejected` — no discovered provider satisfied policy. See `task.policy.reasons`.
@@ -150,12 +173,17 @@ POST /api/agent/entrypoints/procurement_status/invoke
 ```
 Body: `{ "input": { "taskId": "..." } }`, or `procure task <taskId>`.
 
+> **Natural language (e.g. a human via Telegram):** "What's the status of
+> task abc-123?" / "Did the USDC move happen yet?" / "Check on that
+> procurement request."
+
 ## Reference material
 
 - `references/protocols.md` — SIWX wire format, ERC-8004/Agent-Card fields, AP2 roles, how KeeperHub's guarded execution works.
 - `references/api-reference.md` — every HTTP entrypoint, request/response shapes, error modes.
 - `references/mcp-tools.md` — the MCP tool list, schemas, and trust-boundary notes.
 - `references/examples.md` — full worked transcripts (accepted, rejected, MCP-only).
+- [`scripts/cli/README.md`](scripts/cli/README.md) — every `procure` command paired with its raw `curl` equivalent, for an agent that only shells out to plain HTTP.
 
 ## Using the bundled CLI
 
@@ -164,5 +192,6 @@ cd agent-skills/scripts/cli && npm install
 node bin/procure.js status
 ```
 
-See `scripts/cli/` and `agent-skills/README.md` for install-as-a-global-command
-instructions and the full command/config reference.
+See [`scripts/cli/README.md`](scripts/cli/README.md) and `agent-skills/README.md`
+for install-as-a-global-command instructions and the full command/config
+reference, including a `curl` equivalent for every command.

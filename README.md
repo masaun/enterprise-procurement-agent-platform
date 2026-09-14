@@ -47,7 +47,7 @@ flowchart TB
 | `./app/lib/lucid` | The Procurement Agent's runtime, mock-provider agents, and the discovery/selection pipeline | [`app/README.md`](app/README.md) |
 | `./app/lib/keeperhub` | Policy engine + `@keeperhub/sdk` execution adapter | [`app/README.md`](app/README.md) |
 | `./agent-skills` | An [Agent Skills](https://agentskills.io/home)-compliant skill teaching an external agent how to use `./app/api/agent` | [`agent-skills/README.md`](agent-skills/README.md) |
-| `./agent-skills/scripts/cli` | `procure` CLI (modeled on [moltbook-cli](https://github.com/Moltbook-Official/moltbook-cli)) for agents that can shell out but not craft HTTP/MCP calls | [`agent-skills/README.md`](agent-skills/README.md) |
+| `./agent-skills/scripts/cli` | `procure` CLI (modeled on [moltbook-cli](https://github.com/Moltbook-Official/moltbook-cli)) for agents that can shell out but not craft HTTP/MCP calls | [`agent-skills/README.md`](agent-skills/README.md), [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) (every command + its `curl` equivalent) |
 
 `./app` and `./agent-skills/scripts/cli` are two independent, self-contained
 projects (each with its own `package.json`/`node_modules`) living side by
@@ -109,3 +109,4 @@ for the CLI's own variables.
 
 - [`app/README.md`](app/README.md) — UI + API architecture, sequence diagram, module table, full env var table.
 - [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to behave against this app.
+- [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to.
