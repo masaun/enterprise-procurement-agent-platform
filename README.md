@@ -87,6 +87,43 @@ cd agent-skills/scripts/cli && npm install
 node bin/procure.ts submit --instruction "Move 1M USDC to an approved lending protocol, but only if APY > 4%." --amount 1000000
 ```
 
+## Interaction model
+
+However an "Enterprise" reaches the Procurement Agent — dashboard UI, the
+`procure` CLI, raw HTTP, or MCP — it drives the same sequence against
+`app/api/agent` (full detail in [`agent-skills/SKILL.md`](agent-skills/SKILL.md)):
+
+| Step | Entrypoint | Auth required | Purpose |
+| --- | --- | --- | --- |
+| 1. Discover | `GET /api/agent/.well-known/agent-card.json` | none | Read the Agent Card: skills, ERC-8004 trust metadata, AP2 role. |
+| 2. Authenticate | `POST /api/agent/entrypoints/authenticate/invoke` | SIWX (401 + challenge, then signed retry) | Prove control of the Enterprise's wallet. No payment, no side effects. |
+| 3. Discover providers | `POST /api/agent/entrypoints/discover/invoke` | none | A2A-discover and quote every known provider. No purchase, no KeeperHub call. |
+| 4. Check policy | `POST /api/agent/entrypoints/policy/invoke` | none | Read the KeeperHub-enforced policy (max amount, allowed assets/protocols, min APY). |
+| 5. Procure | `POST /api/agent/entrypoints/procure/invoke` | SIWX (its own challenge/retry) | The full pipeline: A2A discovery -> ERC-8004 identity -> policy evaluation -> AP2 mandate -> KeeperHub `DirectExecutor.checkAndExecute()` -> execution receipt. |
+| 6. Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously submitted `ProcurementTask` by id. |
+
+Only steps 2 and 5 require signing. Step 3 decides *who to buy from*;
+KeeperHub, invoked internally inside step 5, decides *how to execute* — no
+caller, human or agent, talks to KeeperHub directly.
+
+### Server secrets vs. caller secrets
+
+The two credential sets below never mix. An external agent calling in over
+HTTP/MCP cannot read, set, or override anything in the app's own `.env` — it
+authenticates *to* the app using credentials it holds itself:
+
+| Server-side (`app/.env`) | Caller-side (`agent-skills` CLI / any external agent's own env) |
+| --- | --- |
+| `DEVELOPER_WALLET_PRIVATE_KEY`, `AGENT_WALLET_PRIVATE_KEY` — the **Procurement Agent's own** operator/signing wallets. | `PROCURE_PRIVATE_KEY` — the **Enterprise's** wallet the caller signs SIWX challenges with. |
+| `AGENT_MCP_API_KEY` — the shared secret `app/api/agent/mcp` checks *incoming* requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller and sent as `Authorization: Bearer <key>`. |
+| `KEEPERHUB_API_KEY` / `KEEPERHUB_BASE_URL` / `KEEPERHUB_EXECUTION_MODE` — the app's own KeeperHub account, used internally inside step 5. | *(none — the caller never talks to KeeperHub directly; it only sees the resulting `ProcurementTask`.)* |
+
+The only value a caller needs to *match* (not replace) is
+`AGENT_MCP_API_KEY`/`PROCURE_MCP_API_KEY`. See
+[`app/README.md`](app/README.md#server-secrets-vs-caller-secrets) and
+[`agent-skills/README.md`](agent-skills/README.md#server-secrets-vs-caller-secrets)
+for the same breakdown alongside each project's full env var reference.
+
 ## Environment variables (consolidated)
 
 Every value has a working default for `DEMO_MODE` — see
@@ -107,6 +144,6 @@ for the CLI's own variables.
 
 ## Further reading
 
-- [`app/README.md`](app/README.md) — UI + API architecture, sequence diagram, module table, full env var table.
+- [`app/README.md`](app/README.md) — UI + API architecture, sequence diagram, interaction model, module table, full env var table.
 - [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to behave against this app.
 - [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to.

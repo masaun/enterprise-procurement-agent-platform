@@ -44,6 +44,47 @@ needed (expensive, on demand). This package follows that shape exactly:
 | `references/examples.md` | Wanting a worked transcript | Real accepted/rejected/MCP-only runs. |
 | `scripts/cli/` | Can shell out but not craft HTTP/MCP calls | The `procure` command (below). |
 
+## Interaction model
+
+Every surface (HTTP, MCP, CLI) drives the same sequence against
+`../app/api/agent` — see [`SKILL.md`](SKILL.md) for the full step-by-step
+with request/response detail and natural-language phrasing examples.
+
+| Step | Entrypoint | Auth required | Purpose |
+| --- | --- | --- | --- |
+| 1. Discover | `GET /api/agent/.well-known/agent-card.json` | none | Read this agent's A2A Agent Card, ERC-8004 trust metadata, AP2 role declaration. |
+| 2. Authenticate | `POST /api/agent/entrypoints/authenticate/invoke` | SIWX (401 + challenge, then signed retry) | Prove control of the Enterprise's wallet. No payment, no side effects. |
+| 3. Discover providers | `POST /api/agent/entrypoints/discover/invoke` | none | A2A-discover and quote every known provider. No purchase, no KeeperHub call. |
+| 4. Check policy | `POST /api/agent/entrypoints/policy/invoke` | none | Read the KeeperHub-enforced policy (max amount, allowed assets/protocols, min APY) before committing. |
+| 5. Procure | `POST /api/agent/entrypoints/procure/invoke` | SIWX (its own challenge/retry — don't call step 2 separately first) | Runs the full pipeline: A2A discovery -> ERC-8004 identity -> policy evaluation -> AP2 mandate -> KeeperHub `DirectExecutor.checkAndExecute()` -> execution receipt. |
+| 6. Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously submitted `ProcurementTask` by id. |
+
+Steps 1, 3, 4, and 6 are read-only previews; only steps 2 and 5 require the
+calling agent to sign anything. `discover` (step 3) decides *who to buy
+from*; KeeperHub, invoked internally inside step 5, decides *how to execute*
+— the calling agent never talks to KeeperHub directly.
+
+## Server secrets vs. caller secrets
+
+The app's own `.env` (see [`../app/README.md`](../app/README.md#environment-variables))
+and this CLI's config/env vars (below) are two entirely separate credential
+sets that never mix. An external agent calling in over HTTP/MCP cannot read,
+set, or override anything in the app's `.env` — it authenticates *to* the
+app using credentials it holds itself:
+
+| Server-side (`app/.env`) | Caller-side (`~/.procure/config.json` / `PROCURE_*` env) |
+| --- | --- |
+| `DEVELOPER_WALLET_PRIVATE_KEY`, `AGENT_WALLET_PRIVATE_KEY` — the **Procurement Agent's own** operator/signing wallets, read server-side by `@lucid-agents/wallet`. | `PROCURE_PRIVATE_KEY` — the **Enterprise's** wallet the calling agent signs SIWX challenges with. |
+| `AGENT_MCP_API_KEY` — the shared secret `app/api/agent/mcp` checks *incoming* requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller and sent as `Authorization: Bearer <key>`. |
+| `KEEPERHUB_API_KEY` / `KEEPERHUB_BASE_URL` / `KEEPERHUB_EXECUTION_MODE` — the server's own KeeperHub account, used internally inside step 5 (`procure`). | *(none — the calling agent never talks to KeeperHub directly; it only sees the resulting `ProcurementTask`.)* |
+
+In other words: the app's environment variables configure *this app's*
+identity, signing capability, and downstream API access, and stay fixed
+regardless of who calls in. The only value a caller needs to *match* (not
+replace) is `AGENT_MCP_API_KEY`/`PROCURE_MCP_API_KEY`, for MCP auth; SIWX
+authentication (steps 2 and 5) is a signature check against the caller's own
+wallet, not against any server-held private key.
+
 ## The `procure` CLI
 
 Modeled on [moltbook-cli](https://github.com/Moltbook-Official/moltbook-cli)

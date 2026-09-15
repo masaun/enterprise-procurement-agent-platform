@@ -94,6 +94,28 @@ sequenceDiagram
     A-->>E: ProcurementTask { status, selectedProvider, policy, execution, timeline }
 ```
 
+## Interaction model
+
+The sequence diagram above zooms into step 5 below. Zoomed out, every caller
+of `app/api/agent` — UI, `procure` CLI, or an external agent like Hermes —
+drives the same sequence, documented for agent consumption in
+[`agent-skills/SKILL.md`](../agent-skills/SKILL.md):
+
+| Step | Entrypoint | Auth required | Purpose |
+| --- | --- | --- | --- |
+| 1. Discover | `GET /api/agent/.well-known/agent-card.json` | none | Read this agent's A2A Agent Card, ERC-8004 trust metadata, AP2 role declaration. |
+| 2. Authenticate | `POST /api/agent/entrypoints/authenticate/invoke` | SIWX (401 + challenge, then signed retry) | Prove control of the Enterprise's wallet. No payment, no side effects. |
+| 3. Discover providers | `POST /api/agent/entrypoints/discover/invoke` | none | A2A-discover and quote every known provider (`lib/lucid/mock-providers.ts`). No purchase, no KeeperHub call. |
+| 4. Check policy | `POST /api/agent/entrypoints/policy/invoke` | none | Read the KeeperHub-enforced policy (`lib/keeperhub/policy.ts`) before committing. |
+| 5. Procure | `POST /api/agent/entrypoints/procure/invoke` | SIWX (its own challenge/retry — step 2 need not be called first) | The full pipeline shown in the sequence diagram above. |
+| 6. Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously submitted `ProcurementTask` by id (`lib/store.ts`). |
+
+Steps 1, 3, 4, and 6 are read-only previews; only steps 2 and 5 require the
+caller to sign anything. `discover` (step 3) decides *who to buy from* over
+A2A; KeeperHub, invoked internally inside step 5 via
+`lib/keeperhub/client.ts`, decides *how to execute* — no caller talks to
+KeeperHub directly, agent or otherwise.
+
 ## Module map
 
 | Path | Responsibility |
@@ -164,3 +186,24 @@ required to run the app locally.
 See [`../README.md`](../README.md) for the project-level overview and
 [`../agent-skills/README.md`](../agent-skills/README.md) for the CLI's own
 variables.
+
+### Server secrets vs. caller secrets
+
+The variables above are this app's own — fixed server-side, read once from
+`process.env` on this deployment (or `.env.local`, never the committed
+`.env.example`). An external agent calling `app/api/agent` over HTTP or MCP
+cannot read, set, or override any of them; it authenticates *to* this app
+using credentials it holds itself, from its own environment — see
+[`agent-skills/README.md`](../agent-skills/README.md#environment-variables)
+for the `PROCURE_*` side of this table:
+
+| Server-side (this table) | Caller-side (`agent-skills` CLI / any external agent) |
+| --- | --- |
+| `DEVELOPER_WALLET_PRIVATE_KEY`, `AGENT_WALLET_PRIVATE_KEY` — the **Procurement Agent's own** operator/signing wallets, read server-side by `@lucid-agents/wallet`. | `PROCURE_PRIVATE_KEY` — the **Enterprise's** wallet the calling agent signs SIWX challenges with (steps 2/5 above). |
+| `AGENT_MCP_API_KEY` — the shared secret `app/api/agent/mcp` checks *incoming* requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller and sent as `Authorization: Bearer <key>`. |
+| `KEEPERHUB_API_KEY` / `KEEPERHUB_BASE_URL` / `KEEPERHUB_EXECUTION_MODE` — this app's own KeeperHub account, used internally inside step 5 (`procure`). | *(none — the calling agent never talks to KeeperHub directly; it only sees the resulting `ProcurementTask`.)* |
+
+The only value a caller needs to *match* (not replace) is
+`AGENT_MCP_API_KEY`/`PROCURE_MCP_API_KEY`, for MCP auth; SIWX authentication
+is a signature check against the caller's own wallet, never against a
+server-held private key.
