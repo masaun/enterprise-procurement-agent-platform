@@ -1,0 +1,15 @@
+{
+  "taskId": "task-demo-generic-001",
+  "instruction": "Move 1,000,000 USDC from our treasury to an approved lending protocol, but only if APY > 4%.",
+  "asset": "USDC",
+  "amount": "1000000",
+  "minApyBps": 400,
+  "allowedProtocols": [],
+  "policy": {
+    "maxUsdPerTask": 1000000,
+    "minApyBps": 400,
+    "allowedAssets": ["USDC"],
+    "allowedProtocols": ["aave-v3", "compound-v3", "morpho"]
+  },
+  "enterpriseId": "default-enterprise"
+}

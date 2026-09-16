@@ -71,6 +71,12 @@ flowchart TB
     ChainReader --> UI
 ```
 
+`External` above is deliberately generic — it's whichever agent runtime the
+enterprise admin registered a webhook route for. `./agent-demo` is this
+repo's own concrete implementation of that box: it reads `./agent-skills`
+itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
+(`procure`) — see [`agent-demo/README.md`](agent-demo/README.md).
+
 ## Repository layout
 
 | Path | What it is | Docs |
@@ -83,10 +89,11 @@ flowchart TB
 | `./contracts` | Foundry project: `ProcurementRegistry.sol` — on-chain activity history + on-chain agent allowlist | [`contracts/README.md`](contracts/README.md) |
 | `./agent-skills` | An [Agent Skills](https://agentskills.io/home)-compliant skill teaching an external agent how to act on a dispatched webhook | [`agent-skills/README.md`](agent-skills/README.md) |
 | `./agent-skills/scripts/cli` | `procure` CLI — now the actor: discovery/policy read, KeeperHub execution, on-chain receipt write, all with the external agent's own credentials | [`agent-skills/README.md`](agent-skills/README.md), [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) |
+| `./agent-demo` | A demo **external agent** playing the same actor/role as a real Hermes Agent or OpenClaw install: reads `./agent-skills` itself at runtime, reasons over an LLM (via [OpenRouter](https://openrouter.ai/docs/quickstart)), and drives the `procure` CLI to act | [`agent-demo/README.md`](agent-demo/README.md) |
 
-`./app`, `./agent-skills/scripts/cli`, and `./contracts` are three
-independent, self-contained projects (each with its own dependency
-management — `npm`/`npm`/`forge`) living side by side in this repo.
+`./app`, `./agent-skills/scripts/cli`, `./agent-demo`, and `./contracts` are
+four independent, self-contained projects (each with its own dependency
+management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 
 ## What's real vs. simulated
 
@@ -124,6 +131,19 @@ node bin/procure.ts submit --instruction "Move 1M USDC to an approved lending pr
 KeeperHub execute -> record on-chain -> report to the dashboard) using
 whatever `PROCURE_*` credentials are configured, falling back to
 KeeperHub-demo-mode and skipping the on-chain write if they're not set.
+
+That's the deterministic reference path. To see an actual **agent** decide
+to run it — verifying a webhook, choosing `submit` vs. `act`, reading
+`agent-skills/references/*.md` on demand — use `./agent-demo` instead:
+
+```bash
+cd agent-demo
+npm install
+cp .env.example .env   # set OPENROUTER_API_KEY, see https://openrouter.ai/docs/quickstart
+node bin/agent-demo.ts webhook --platform generic --payload fixtures/webhook-generic.json
+```
+
+See [`agent-demo/README.md`](agent-demo/README.md).
 
 ## Interaction model
 
@@ -192,6 +212,8 @@ for the full tables.
 | `POLICY_MAX_USD_PER_TASK`, `POLICY_MIN_APY_BPS`, `POLICY_ALLOWED_ASSETS`, `POLICY_ALLOWED_PROTOCOLS` | seed defaults for the now-editable policy store | `1000000` / `400` / `USDC` / `aave-v3,compound-v3,morpho` |
 | `DEPLOYER_PRIVATE_KEY`, `BASE_SEPOLIA_RPC_URL`, `BASESCAN_API_KEY` | `./contracts` deploy script | — |
 | `PROCURE_BASE_URL`, `PROCURE_PRIVATE_KEY`, `PROCURE_MCP_API_KEY`, `PROCURE_KEEPERHUB_API_KEY`, `PROCURE_KEEPERHUB_BASE_URL`, `PROCURE_KEEPERHUB_EXECUTION_MODE`, `PROCURE_REGISTRY_ADDRESS`, `PROCURE_RPC_URL` | `procure` CLI (the actor) | `http://localhost:3000` / ephemeral signer / none / demo mode / ... |
+| `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL` | `agent-demo`'s LLM client (the actor's decision layer) | none (required) / `openai/gpt-4o-mini` / `https://openrouter.ai/api/v1` |
+| `AGENT_DEMO_PERSONA`, `AGENT_DEMO_NAME` | `agent-demo` — which real agent runtime (`hermes`/`openclaw`/`generic`) this run role-plays as | `generic` / `Demo External Agent` |
 
 ## Further reading
 
@@ -199,3 +221,4 @@ for the full tables.
 - [`contracts/README.md`](contracts/README.md) — `ProcurementRegistry.sol`, build/test/deploy.
 - [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to act on a dispatched webhook.
 - [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to (where one exists).
+- [`agent-demo/README.md`](agent-demo/README.md) — the LLM-driven demo external agent (via OpenRouter) that reads `./agent-skills` itself and drives `procure`, standing in for a real Hermes Agent/OpenClaw install.

@@ -13,6 +13,7 @@ bun.lock
 .env.*.local
 app/.env
 agent-skills/.env
+agent-demo/.env
 
 # demo persistence
 app/data/*.json

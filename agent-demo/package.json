@@ -1,0 +1,23 @@
+{
+  "name": "agent-demo",
+  "version": "1.0.0",
+  "description": "A demo external agent (stands in for Hermes Agent, OpenClaw, or any Agent-Skills-compatible runtime) that reads ./agent-skills itself, reasons over an OpenRouter-hosted LLM, and drives the procure CLI as its own actor.",
+  "type": "module",
+  "bin": {
+    "agent-demo": "./bin/agent-demo.ts"
+  },
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "start": "node bin/agent-demo.ts"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
