@@ -76,6 +76,10 @@ export type TimelineEventKind =
   | "policy.evaluated"
   | "keeperhub.condition_checked"
   | "keeperhub.executed"
+  | "webhook.dispatched"
+  | "erc8004.gate_checked"
+  | "chain.recorded"
+  | "report.received"
   | "task.completed"
   | "task.failed";
 
@@ -87,6 +91,7 @@ export type TimelineEvent = {
 };
 
 export type TaskStatus =
+  | "dispatched"
   | "authenticating"
   | "discovering"
   | "evaluating_policy"
@@ -107,7 +112,26 @@ export type ProcurementTask = {
   createdAt: string;
   updatedAt: string;
   error?: string;
+  /** Set once the external agent has written the matching receipt on-chain (see lib/chain/registry.ts). */
+  onChainTransactionHash?: string;
 };
+
+/**
+ * What an external agent POSTs to `report` after executing a procurement
+ * itself (discovery/policy fetched from this server, execution + on-chain
+ * receipt done on its own machine — see agent-skills/scripts/cli). Loosely
+ * validated and passed through: the agent is the one that knows the full
+ * shape of what it did, this just guarantees the fields the dashboard and
+ * the ERC-8004 gate need are present.
+ */
+export const ProcurementReportSchema = z
+  .object({
+    taskId: z.string().min(1),
+    status: z.enum(["completed", "rejected", "failed", "dispatched", "authenticating", "discovering", "evaluating_policy", "executing"]),
+    request: ProcurementRequestSchema,
+  })
+  .passthrough();
+export type ProcurementReport = z.infer<typeof ProcurementReportSchema>;
 
 export type KeeperHubExecutionResult = {
   mode: "direct" | "workflow" | "demo";

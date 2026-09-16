@@ -6,7 +6,7 @@ export default function HomePage() {
       <div className="topbar">
         <div className="brand">
           <span className="dot" />
-          Enterprise Procurement Agent
+          Enterprise Procurement — Management Platform
         </div>
         <div className="pillrow">
           <a className="pill link" href="/api/agent/.well-known/agent-card.json" target="_blank" rel="noreferrer">
@@ -23,9 +23,11 @@ export default function HomePage() {
       <ProcurementConsole />
 
       <p className="footer-note">
-        Lucid decides <em>who to buy from</em> (SIWX · ERC-8004 · A2A · AP2). KeeperHub decides{" "}
-        <em>how to execute</em> (policy · workflow · wallet · transaction). See <code>README.md</code>,{" "}
-        <code>app/README.md</code>, and <code>agent-skills/README.md</code> for the full architecture.
+        This dashboard sets policy and dispatches procurement intents by webhook — it doesn&apos;t execute
+        anything itself. A subscribed external agent (Hermes Agent, OpenClaw, ...) discovers providers,
+        evaluates policy, executes via its own KeeperHub key, and records the receipt on-chain
+        (<code>ProcurementRegistry</code>, Base Sepolia). See <code>README.md</code>, <code>app/README.md</code>,
+        and <code>agent-skills/README.md</code> for the full architecture.
       </p>
     </div>
   );

@@ -1,85 +1,118 @@
 # Enterprise Procurement Agent Platform
 
 **Use case #4 — Enterprise procurement agent**, built on the **Lucid Agents
-SDK** (`@lucid-agents/*`) and **KeeperHub** (`@keeperhub/sdk`).
+SDK** (`@lucid-agents/*`), **KeeperHub** (`@keeperhub/sdk`), and a Foundry
+contracts project (`./contracts`) on **Base Sepolia**.
 
 > "Find an agent capable of moving 1M USDC from our treasury to an approved
 > lending protocol, but only if APY > 4%."
 
-An enterprise says that once, in plain language. The Procurement Agent
-discovers candidate lending-protocol agents over A2A/Agent Cards, checks
-their ERC-8004 identity and trust, picks the best one that satisfies the
-enterprise's policy, attaches AP2 commerce-role metadata to the purchase, and
-hands off to KeeperHub, which independently re-checks the on-chain condition
-before it ever signs anything.
+A human enterprise admin says that once, through this platform's dashboard.
+`./app` is **management infrastructure, not the actor**: it records the
+intent, pushes it out as a webhook to whichever external agent (Hermes
+Agent, OpenClaw) is subscribed, and gates any results that come back with a
+live, on-chain ERC-8004 identity check. The **external agent itself** —
+running the `agent-skills` CLI toolkit on its own machine, with its own
+KeeperHub key and its own wallet — is the one that discovers candidate
+lending-protocol agents over A2A/Agent Cards, evaluates the enterprise's
+policy, executes via KeeperHub's guarded on-chain call, and writes the
+receipt to `ProcurementRegistry` on Base Sepolia.
 
-**The core split:** Lucid decides *who to buy from*. KeeperHub decides *how
-to execute*. Neither one does the other's job.
+**The core split:** the agent's own `agent-skills` CLI decides *who to buy
+from and how to execute* (A2A discovery, policy evaluation, KeeperHub).
+`./app` decides *whether that agent is allowed to act at all* (ERC-8004
+identity gate) and *shows the enterprise what happened* (on-chain activity
+history). Neither one does the other's job.
+
+## Target architecture
 
 ```mermaid
 flowchart TB
-    Enterprise["Enterprise\n(human via UI, or an external agent —\nHermes, OpenClaw, Claude Desktop, ...)"]
-    PA["Procurement Agent\n@lucid-agents/core runtime"]
-    SIWX["SIWX\nauthenticate enterprise wallet\n@lucid-agents/payments"]
-    ERC["ERC-8004\nidentify service providers\n@lucid-agents/identity"]
-    A2A["A2A\ndiscover + invoke providers\n@lucid-agents/a2a"]
-    AP2["AP2\ncommerce-role mandate\n@lucid-agents/ap2"]
-    KH["KeeperHub\npolicy -> workflow -> wallet -> transaction\n@keeperhub/sdk"]
-    Chain["Blockchain"]
+    subgraph Human["Human enterprise admin"]
+        Admin["Sets policy,\ndescribes procurement intent"]
+    end
 
-    Enterprise -->|"UI / A2A / MCP / CLI"| PA
-    PA --> SIWX --> PA
-    PA --> ERC --> PA
-    PA --> A2A --> PA
-    PA --> AP2 --> PA
-    PA -->|"chosen provider + amount + threshold"| KH
-    KH -->|"DirectExecutor.checkAndExecute()\nread APY, execute only if condition holds"| Chain
+    subgraph App["./app — management platform"]
+        UI["Dashboard UI"]
+        PolicyStore["Policy store\n(editable)"]
+        WebhookReg["Webhook subscriber\nregistry + dispatcher"]
+        Gate["ERC-8004 live gate\n(lib/identity/gate.ts)"]
+        ReportAPI["Report-ingestion entrypoint\n(SIWX + gate-checked)"]
+        ChainReader["Chain reader"]
+        Mocks["Mock provider agents\n(Aave/Compound/Morpho/Yearn)"]
+    end
+
+    subgraph Chain["Base Sepolia"]
+        Registry["ProcurementRegistry.sol\n(./contracts)\nauthorizedAgents allowlist +\nProcurementRecorded events"]
+        IdRegistry["ERC-8004 Identity +\nReputation Registries"]
+    end
+
+    subgraph External["External agent (Hermes / OpenClaw)"]
+        WebhookRecv["Webhook receiver"]
+        CLI["agent-skills CLI\nprocure act / submit"]
+        KH["KeeperHub\nDirectExecutor"]
+    end
+
+    Admin --> UI
+    UI -->|edit| PolicyStore
+    UI -->|submit intent| WebhookReg
+    WebhookReg -->|signed POST| WebhookRecv
+    WebhookRecv --> CLI
+    CLI -->|discover / policy| Mocks
+    CLI -->|policy| PolicyStore
+    CLI --> KH
+    KH -->|checkAndExecute| DeFi[("DeFi protocol\ncontracts")]
+    CLI -->|recordProcurement\n(agent's own wallet)| Registry
+    CLI -->|POST report\n(SIWX-signed)| ReportAPI
+    ReportAPI --> Gate
+    Gate -->|verify| IdRegistry
+    Gate -->|pass -> addAuthorizedAgent| Registry
+    ChainReader -->|read logs| Registry
+    ChainReader --> UI
 ```
 
 ## Repository layout
 
 | Path | What it is | Docs |
 | --- | --- | --- |
-| `./app` | Next.js 16 App Router UI + all API routes | [`app/README.md`](app/README.md) |
-| `./app/api` | UI-facing convenience routes (`/health`, `/providers`, `/demo/*`) | [`app/README.md`](app/README.md) |
-| `./app/api/agent` | **The agent-facing surface.** A2A Agent Card, SIWX-protected entrypoints, ERC-8004/AP2 metadata — this is what an external "Enterprise" agent talks to | [`app/README.md`](app/README.md) |
-| `./app/api/agent/mcp` | MCP server exposing the same capabilities as MCP tools | [`app/README.md`](app/README.md) |
-| `./app/lib/lucid` | The Procurement Agent's runtime, mock-provider agents, and the discovery/selection pipeline | [`app/README.md`](app/README.md) |
-| `./app/lib/keeperhub` | Policy engine + `@keeperhub/sdk` execution adapter | [`app/README.md`](app/README.md) |
-| `./agent-skills` | An [Agent Skills](https://agentskills.io/home)-compliant skill teaching an external agent how to use `./app/api/agent` | [`agent-skills/README.md`](agent-skills/README.md) |
-| `./agent-skills/scripts/cli` | `procure` CLI (modeled on [moltbook-cli](https://github.com/Moltbook-Official/moltbook-cli)) for agents that can shell out but not craft HTTP/MCP calls | [`agent-skills/README.md`](agent-skills/README.md), [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) (every command + its `curl` equivalent) |
+| `./app` | Next.js 16 App Router — the management platform's dashboard + API | [`app/README.md`](app/README.md) |
+| `./app/api/agent` | The agent-facing surface: A2A Agent Card, SIWX-protected `authenticate`/`discover`/`policy`/`report`/`procurement_status` entrypoints | [`app/README.md`](app/README.md) |
+| `./app/lib/identity/gate.ts` | Live ERC-8004 verification of an inbound caller (composes `@lucid-agents/identity`'s registry-client primitives) | [`app/README.md`](app/README.md) |
+| `./app/lib/webhooks` | Subscriber registry + per-platform (Hermes/OpenClaw/generic) webhook dispatch | [`app/README.md`](app/README.md) |
+| `./app/lib/chain` | viem client reading/writing `ProcurementRegistry` on Base Sepolia | [`app/README.md`](app/README.md) |
+| `./contracts` | Foundry project: `ProcurementRegistry.sol` — on-chain activity history + on-chain agent allowlist | [`contracts/README.md`](contracts/README.md) |
+| `./agent-skills` | An [Agent Skills](https://agentskills.io/home)-compliant skill teaching an external agent how to act on a dispatched webhook | [`agent-skills/README.md`](agent-skills/README.md) |
+| `./agent-skills/scripts/cli` | `procure` CLI — now the actor: discovery/policy read, KeeperHub execution, on-chain receipt write, all with the external agent's own credentials | [`agent-skills/README.md`](agent-skills/README.md), [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) |
 
-`./app` and `./agent-skills/scripts/cli` are two independent, self-contained
-projects (each with its own `package.json`/`node_modules`) living side by
-side in this repo — there is nothing to install or run from the repo root
-itself.
+`./app`, `./agent-skills/scripts/cli`, and `./contracts` are three
+independent, self-contained projects (each with its own dependency
+management — `npm`/`npm`/`forge`) living side by side in this repo.
 
 ## What's real vs. simulated
 
-Every protocol integration below is the actual, installed npm package doing
-real work — not a mock of the SDK's shape. The only simulated pieces are
-economic data and counterparties this hackathon repo doesn't control:
-
 | Piece | Status |
 | --- | --- |
-| SIWX challenge/sign/verify (EIP-191 signature, nonce, expiry) | **Real.** `@lucid-agents/payments`. Verified end-to-end against a real signature in this repo's own tests. |
-| A2A discovery + invocation (Agent Cards, `quote` skill calls) | **Real.** `@lucid-agents/a2a`, against three small real agent runtimes this repo also hosts (see below). |
-| ERC-8004 identity/trust metadata | **Real shape**, statically declared by default (no deployed registry in this demo). Set `AGENT_DOMAIN`/`RPC_URL`/`CHAIN_ID` to switch to live on-chain resolution via `@lucid-agents/identity`. |
-| AP2 commerce-role mandate | **Real.** `@lucid-agents/ap2` — `shopper` (this agent) / `merchant` (each provider). |
-| KeeperHub execution | **Real SDK, `@keeperhub/sdk`.** Runs against the live KeeperHub API when `KEEPERHUB_API_KEY` is set; otherwise falls back to a same-shaped simulated `DirectExecutor.checkAndExecute()` result (`DEMO_MODE`). |
-| The three "lending protocol" providers (Aave/Compound/Morpho gateway agents) | **Simulated economics.** They're real `@lucid-agents/core` A2A agents this repo hosts at `/api/mock-providers/*`, standing in for external counterparties this hackathon doesn't have live deployments of. Their contract addresses are illustrative placeholders on Base Sepolia. |
+| SIWX challenge/sign/verify (EIP-191 signature, nonce, expiry) | **Real.** `@lucid-agents/payments`. |
+| A2A discovery + invocation (Agent Cards, `quote` skill calls) | **Real.** `@lucid-agents/a2a`, against three small real agent runtimes `./app` hosts. |
+| ERC-8004 inbound gate | **Real, live on-chain verification.** `app/lib/identity/gate.ts` calls `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient` against Base Sepolia — not a static allowlist. |
+| On-chain activity history | **Real.** `ProcurementRegistry.sol` (`./contracts`), deployed to Base Sepolia; the dashboard reads `ProcurementRecorded` events directly via viem. |
+| AP2 commerce-role mandate | **Real.** `@lucid-agents/ap2` — `shopper` (the external agent) / `merchant` (each provider). |
+| KeeperHub execution | **Real SDK, `@keeperhub/sdk`**, now run by the external agent's own CLI with its own org key — falls back to a same-shaped simulated result when unset. |
+| The three "lending protocol" providers (Aave/Compound/Morpho gateway agents) | **Simulated economics**, real `@lucid-agents/core` A2A agents `./app` hosts at `/api/mock-providers/*` — the market, not the actor, so it stays platform-hosted regardless of who's buying. |
+| Hermes/OpenClaw webhook delivery | **Real wire format** (fetched from each platform's own docs), but registering a route on either platform happens on that agent operator's own instance — this repo can only dispatch to a URL/secret they provide. |
 
 ## Quickstart
 
 ```bash
 cd app
 npm install
-cp .env.example .env.local     # every value has a safe DEMO_MODE default
+cp .env.example .env.local     # every value has a safe local-dev default
 npm run dev                    # http://localhost:3000
 ```
 
-Open the dashboard, click **Connect & authenticate enterprise wallet**, then
-submit the example instruction. Or drive it as an agent would:
+Open the dashboard: set policy, add a webhook subscriber (or leave none to
+just inspect dispatch behavior), and describe a procurement intent. Or drive
+the actor side directly, as an external agent would once dispatched:
 
 ```bash
 curl http://localhost:3000/api/agent/.well-known/agent-card.json
@@ -87,63 +120,82 @@ cd agent-skills/scripts/cli && npm install
 node bin/procure.ts submit --instruction "Move 1M USDC to an approved lending protocol, but only if APY > 4%." --amount 1000000
 ```
 
+`submit` runs the full local pipeline (discover -> evaluate policy ->
+KeeperHub execute -> record on-chain -> report to the dashboard) using
+whatever `PROCURE_*` credentials are configured, falling back to
+KeeperHub-demo-mode and skipping the on-chain write if they're not set.
+
 ## Interaction model
 
-However an "Enterprise" reaches the Procurement Agent — dashboard UI, the
-`procure` CLI, raw HTTP, or MCP — it drives the same sequence against
-`app/api/agent` (full detail in [`agent-skills/SKILL.md`](agent-skills/SKILL.md)):
+```mermaid
+sequenceDiagram
+    participant H as Human admin
+    participant P as ./app platform
+    participant W as Webhook receiver (Hermes/OpenClaw)
+    participant A as External agent (CLI)
+    participant K as KeeperHub
+    participant C as ProcurementRegistry (Base Sepolia)
 
-| Step | Entrypoint | Auth required | Purpose |
+    H->>P: Set/edit policy (PATCH /api/policy)
+    H->>P: Describe procurement intent (POST /api/procurement-intents)
+    P->>W: Dispatch signed webhook (platform-specific payload)
+    W->>A: Agent acts (rendered prompt / TaskFlow run_task)
+    A->>P: GET discover/policy entrypoints
+    A->>A: evaluatePolicy() locally, pick best offer
+    A->>K: DirectExecutor.checkAndExecute()
+    A->>C: recordProcurement(taskId, ...) — agent's own wallet
+    A->>P: POST report (SIWX-signed)
+    P->>P: ERC-8004 gate check (live verify + on-chain allowlist)
+    H->>P: Open dashboard
+    P->>C: Read ProcurementRecorded logs
+    P-->>H: Render activity/receipt history
+```
+
+| Step | Entrypoint / route | Auth / gate | Purpose |
 | --- | --- | --- | --- |
-| 1. Discover | `GET /api/agent/.well-known/agent-card.json` | none | Read the Agent Card: skills, ERC-8004 trust metadata, AP2 role. |
-| 2. Authenticate | `POST /api/agent/entrypoints/authenticate/invoke` | SIWX (401 + challenge, then signed retry) | Prove control of the Enterprise's wallet. No payment, no side effects. |
-| 3. Discover providers | `POST /api/agent/entrypoints/discover/invoke` | none | A2A-discover and quote every known provider. No purchase, no KeeperHub call. |
-| 4. Check policy | `POST /api/agent/entrypoints/policy/invoke` | none | Read the KeeperHub-enforced policy (max amount, allowed assets/protocols, min APY). |
-| 5. Procure | `POST /api/agent/entrypoints/procure/invoke` | SIWX (its own challenge/retry) | The full pipeline: A2A discovery -> ERC-8004 identity -> policy evaluation -> AP2 mandate -> KeeperHub `DirectExecutor.checkAndExecute()` -> execution receipt. |
-| 6. Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously submitted `ProcurementTask` by id. |
-
-Only steps 2 and 5 require signing. Step 3 decides *who to buy from*;
-KeeperHub, invoked internally inside step 5, decides *how to execute* — no
-caller, human or agent, talks to KeeperHub directly.
+| 1. Set policy | `PATCH /api/policy` | admin-only (dashboard) | Human-editable treasury policy (max amount, allowed assets/protocols, min APY). |
+| 2. Describe intent | `POST /api/procurement-intents` | admin-only (dashboard) | Records a pending intent and dispatches it as a webhook — **no execution happens here.** |
+| 3. Webhook delivery | Hermes `/webhooks/<route>` or OpenClaw `/plugins/webhooks/<routeId>` or a generic URL | HMAC / Bearer, per platform | The platform-specific, admin-registered subscriber receives the intent. |
+| 4. Discover + policy (read) | `GET /api/agent/entrypoints/discover/invoke`, `.../policy/invoke` | none | The external agent reads platform-hosted market data and the current policy. |
+| 5. Execute | *(off-platform)* | the agent's own KeeperHub key | `evaluatePolicy()` locally, then `DirectExecutor.checkAndExecute()` — this app never sees these credentials. |
+| 6. Record on-chain | `ProcurementRegistry.recordProcurement()` | on-chain `authorizedAgents` allowlist | The agent's own wallet writes the durable receipt. |
+| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live ERC-8004 gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to the same `taskId` as the on-chain receipt. |
+| 8. Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id. |
 
 ### Server secrets vs. caller secrets
 
-The two credential sets below never mix. An external agent calling in over
-HTTP/MCP cannot read, set, or override anything in the app's own `.env` — it
-authenticates *to* the app using credentials it holds itself:
+The two credential sets below never mix. `./app` cannot read, set, or
+override anything the external agent holds, and vice versa:
 
-| Server-side (`app/.env`) | Caller-side (`agent-skills` CLI / any external agent's own env) |
+| Platform-side (`app/.env`) | Actor-side (`agent-skills` CLI / external agent's own env) |
 | --- | --- |
-| `DEVELOPER_WALLET_PRIVATE_KEY`, `AGENT_WALLET_PRIVATE_KEY` — the **Procurement Agent's own** operator/signing wallets. | `PROCURE_PRIVATE_KEY` — the **Enterprise's** wallet the caller signs SIWX challenges with. |
-| `AGENT_MCP_API_KEY` — the shared secret `app/api/agent/mcp` checks *incoming* requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller and sent as `Authorization: Bearer <key>`. |
-| `KEEPERHUB_API_KEY` / `KEEPERHUB_BASE_URL` / `KEEPERHUB_EXECUTION_MODE` — the app's own KeeperHub account, used internally inside step 5. | *(none — the caller never talks to KeeperHub directly; it only sees the resulting `ProcurementTask`.)* |
+| `CONTRACT_OWNER_PRIVATE_KEY` — administers the on-chain `authorizedAgents` allowlist only after a live ERC-8004 check passes. Never touches enterprise funds. | `PROCURE_PRIVATE_KEY` — the external agent's own wallet: signs SIWX challenges *and* writes the on-chain receipt. |
+| `AGENT_MCP_API_KEY` — shared secret `app/api/agent/mcp` checks incoming requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller. |
+| `RPC_URL` / `PROCUREMENT_REGISTRY_ADDRESS` — used only for read-only chain queries and the gate's registry lookups. | `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_KEEPERHUB_BASE_URL` / `PROCURE_KEEPERHUB_EXECUTION_MODE` — the agent's own KeeperHub org credentials. Never held by `./app`. |
+| *(nothing — the platform no longer holds a treasury or KeeperHub key at all)* | `PROCURE_REGISTRY_ADDRESS` / `PROCURE_RPC_URL` — same contract, used to broadcast the write. |
 
-The only value a caller needs to *match* (not replace) is
-`AGENT_MCP_API_KEY`/`PROCURE_MCP_API_KEY`. See
-[`app/README.md`](app/README.md#server-secrets-vs-caller-secrets) and
-[`agent-skills/README.md`](agent-skills/README.md#server-secrets-vs-caller-secrets)
-for the same breakdown alongside each project's full env var reference.
+See [`app/README.md#environment-variables`](app/README.md#environment-variables)
+and [`agent-skills/README.md#environment-variables`](agent-skills/README.md#environment-variables)
+for the full tables.
 
 ## Environment variables (consolidated)
 
-Every value has a working default for `DEMO_MODE` — see
-[`app/README.md`](app/README.md#environment-variables) for the full table
-with explanations, and [`agent-skills/README.md`](agent-skills/README.md#environment-variables)
-for the CLI's own variables.
-
 | Variable | Used by | Default |
 | --- | --- | --- |
-| `APP_PUBLIC_ORIGIN` | app | `http://localhost:3000` |
-| `SIWX_PUBLIC_ORIGIN` | `@lucid-agents/payments` | `http://localhost:3000` |
+| `APP_PUBLIC_ORIGIN`, `SIWX_PUBLIC_ORIGIN` | app / `@lucid-agents/payments` | `http://localhost:3000` |
 | `PAYMENTS_RECEIVABLE_ADDRESS`, `PAYMENTS_NETWORK`, `PAYMENTS_FACILITATOR_URL` | `@lucid-agents/payments` | zero address / `eip155:84532` / `https://x402.org/facilitator` |
-| `AGENT_DOMAIN`, `RPC_URL`, `CHAIN_ID`, `IDENTITY_AGENT_ID` | `@lucid-agents/identity` | unset -> static trust config |
-| `KEEPERHUB_API_KEY`, `KEEPERHUB_BASE_URL` | `@keeperhub/sdk` | unset -> simulated execution |
+| `AGENT_DOMAIN`, `RPC_URL`, `CHAIN_ID`, `IDENTITY_AGENT_ID` | `@lucid-agents/identity` + `lib/identity/gate.ts` + `lib/chain/registry.ts` | unset -> static self-declared identity; `RPC_URL` defaults to Base Sepolia public RPC |
+| `IDENTITY_REGISTRY_ADDRESS`, `REPUTATION_REGISTRY_ADDRESS` | `lib/identity/gate.ts` | unset -> resolved via `@lucid-agents/identity`'s `getRegistryAddress()` |
 | `AGENT_MCP_API_KEY` | `./app/api/agent/mcp` | unset -> open (local dev) |
-| `POLICY_MAX_USD_PER_TASK`, `POLICY_MIN_APY_BPS`, `POLICY_ALLOWED_ASSETS`, `POLICY_ALLOWED_PROTOCOLS` | policy engine | `1000000` / `400` / `USDC` / `aave-v3,compound-v3,morpho` |
-| `PROCURE_BASE_URL`, `PROCURE_PRIVATE_KEY`, `PROCURE_MCP_API_KEY` | `procure` CLI | `http://localhost:3000` / none (ephemeral signer) / none |
+| `PROCUREMENT_REGISTRY_ADDRESS` | `lib/chain/registry.ts` | unset -> on-chain history/gating disabled |
+| `CONTRACT_OWNER_PRIVATE_KEY` | `lib/chain/registry.ts` (admin writes only) | unset -> authorizing agents fails |
+| `POLICY_MAX_USD_PER_TASK`, `POLICY_MIN_APY_BPS`, `POLICY_ALLOWED_ASSETS`, `POLICY_ALLOWED_PROTOCOLS` | seed defaults for the now-editable policy store | `1000000` / `400` / `USDC` / `aave-v3,compound-v3,morpho` |
+| `DEPLOYER_PRIVATE_KEY`, `BASE_SEPOLIA_RPC_URL`, `BASESCAN_API_KEY` | `./contracts` deploy script | — |
+| `PROCURE_BASE_URL`, `PROCURE_PRIVATE_KEY`, `PROCURE_MCP_API_KEY`, `PROCURE_KEEPERHUB_API_KEY`, `PROCURE_KEEPERHUB_BASE_URL`, `PROCURE_KEEPERHUB_EXECUTION_MODE`, `PROCURE_REGISTRY_ADDRESS`, `PROCURE_RPC_URL` | `procure` CLI (the actor) | `http://localhost:3000` / ephemeral signer / none / demo mode / ... |
 
 ## Further reading
 
-- [`app/README.md`](app/README.md) — UI + API architecture, sequence diagram, interaction model, module table, full env var table.
-- [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to behave against this app.
-- [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to.
+- [`app/README.md`](app/README.md) — platform architecture, sequence diagram, module table, full env var table.
+- [`contracts/README.md`](contracts/README.md) — `ProcurementRegistry.sol`, build/test/deploy.
+- [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to act on a dispatched webhook.
+- [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to (where one exists).

@@ -48,7 +48,10 @@ async function invoke(
   const res = await fetchImpl(url, init);
   const body = await asJson(res);
   if (!res.ok) {
-    const message = body?.body?.error?.message || body?.error || `HTTP ${res.status}`;
+    const message =
+      body?.body?.error?.message ||
+      (typeof body?.error === "string" ? body.error : body?.error?.message) ||
+      `HTTP ${res.status}`;
     throw new Error(message);
   }
   return { ...body, _signerAddress: address };
@@ -66,8 +69,17 @@ export async function authenticate(config: CliConfig): Promise<any> {
   return invoke(config, "authenticate", {}, { siwx: true });
 }
 
-export async function submitProcurement(config: CliConfig, request: Record<string, unknown>): Promise<any> {
-  return invoke(config, "procure", request, { siwx: true });
+/**
+ * Reports a procurement task this CLI already discovered, evaluated, and
+ * executed (via its own KeeperHub key) back to the platform for the
+ * dashboard's activity/receipt history. Gated the same way `authenticate`
+ * is (SIWX) plus the platform's on-chain ERC-8004 allowlist check — see
+ * `app/lib/lucid/agent.ts`'s `report` entrypoint and `app/lib/identity/gate.ts`.
+ * Replaces the old `procure` entrypoint, which used to run the whole
+ * pipeline server-side.
+ */
+export async function reportProcurement(config: CliConfig, task: Record<string, unknown>): Promise<any> {
+  return invoke(config, "report", task, { siwx: true });
 }
 
 export async function getTaskStatus(config: CliConfig, taskId: string): Promise<any> {

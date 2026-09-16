@@ -12,13 +12,17 @@ const ICONS: Partial<Record<TimelineEventKind, string>> = {
   "policy.evaluated": "📋",
   "keeperhub.condition_checked": "🧮",
   "keeperhub.executed": "⚡",
+  "webhook.dispatched": "📮",
+  "erc8004.gate_checked": "🛡",
+  "chain.recorded": "⛓",
+  "report.received": "📥",
   "task.completed": "✅",
   "task.failed": "✕",
 };
 
 export function Timeline({ events }: { events: TimelineEvent[] }) {
   if (events.length === 0) {
-    return <div className="empty">No activity yet — submit a procurement request to see the pipeline run.</div>;
+    return <div className="empty">No activity yet — describe a procurement intent to dispatch it to a subscribed agent.</div>;
   }
 
   return (

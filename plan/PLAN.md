@@ -128,8 +128,8 @@ New standalone Foundry project (matches the repo's existing viem/EVM tooling; no
 |---|---|
 | `contracts/foundry.toml`, `contracts/remappings.txt` | Foundry project config; OpenZeppelin `Ownable` via `forge install OpenZeppelin/openzeppelin-contracts` |
 | `contracts/src/ProcurementRegistry.sol` | `Ownable`. `mapping(address => bool) authorizedAgents` + `addAuthorizedAgent`/`revokeAuthorizedAgent` (`onlyOwner`) — populated only after `./app`'s live ERC-8004 verification passes, so the contract itself stays simple rather than hard-coding the deployed ERC-8004 ABI. `recordProcurement(taskId, enterprise, status, asset, amount, apyBps, detailsHash, detailsURI)` — `require(authorizedAgents[msg.sender])`, rejects duplicate `taskId`, stores a compact `Receipt`, appends to an enumerable `taskIds[]`, emits `ProcurementRecorded(...)` with everything needed to render the dashboard from logs alone. View helpers: `getTaskCount()`, `getTaskIdAt(uint256)`, `receipts(bytes32)` |
-| `contracts/script/DeployProcurementRegistry.s.sol` | `forge script` deploy, reads `DEPLOYER_PRIVATE_KEY`/`BASE_SEPOLIA_RPC_URL` from env |
-| `contracts/test/ProcurementRegistry.t.sol` | Foundry tests: only-authorized-agent-can-record, duplicate-taskId reverts, owner-only allowlist management, event fields match input |
+| `contracts/scripts/DeployProcurementRegistry.s.sol` | `forge script` deploy, reads `DEPLOYER_PRIVATE_KEY`/`BASE_SEPOLIA_RPC_URL` from env |
+| `contracts/tests/ProcurementRegistry.t.sol` | Foundry tests: only-authorized-agent-can-record, duplicate-taskId reverts, owner-only allowlist management, event fields match input |
 | `contracts/.env.example`, `contracts/README.md` | Build/test/deploy commands, Base Sepolia explorer link placeholder |
 
 **I will write and test all of this locally (`forge build`, `forge test`), but will not broadcast the actual Base Sepolia deployment without your go-ahead and a funded deployer key** — that's a real, hard-to-reverse on-chain action outside this planning step. Once deployed, the resulting address feeds Phases 2–4.

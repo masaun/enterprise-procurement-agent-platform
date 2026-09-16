@@ -6,6 +6,14 @@ export interface CliConfig {
   baseUrl: string;
   privateKey: string | null;
   mcpApiKey: string | null;
+  /** The external agent's own KeeperHub org key — execution now runs here, not on the server. */
+  keeperHubApiKey: string | null;
+  keeperHubBaseUrl: string | null;
+  keeperHubExecutionMode: string;
+  /** Deployed ProcurementRegistry address (./contracts), Base Sepolia. */
+  registryAddress: string | null;
+  /** Base Sepolia RPC endpoint used for both KeeperHub reads and the registry write. */
+  rpcUrl: string;
 }
 
 const CONFIG_DIR = join(homedir(), ".procure");
@@ -15,6 +23,11 @@ const DEFAULTS: CliConfig = {
   baseUrl: "http://localhost:3000",
   privateKey: null,
   mcpApiKey: null,
+  keeperHubApiKey: null,
+  keeperHubBaseUrl: null,
+  keeperHubExecutionMode: "direct",
+  registryAddress: null,
+  rpcUrl: "https://sepolia.base.org",
 };
 
 export function loadConfig(): CliConfig {
@@ -33,6 +46,12 @@ export function loadConfig(): CliConfig {
     baseUrl: process.env.PROCURE_BASE_URL || fileConfig.baseUrl || DEFAULTS.baseUrl,
     privateKey: process.env.PROCURE_PRIVATE_KEY || fileConfig.privateKey || DEFAULTS.privateKey,
     mcpApiKey: process.env.PROCURE_MCP_API_KEY || fileConfig.mcpApiKey || DEFAULTS.mcpApiKey,
+    keeperHubApiKey: process.env.PROCURE_KEEPERHUB_API_KEY || fileConfig.keeperHubApiKey || DEFAULTS.keeperHubApiKey,
+    keeperHubBaseUrl: process.env.PROCURE_KEEPERHUB_BASE_URL || fileConfig.keeperHubBaseUrl || DEFAULTS.keeperHubBaseUrl,
+    keeperHubExecutionMode:
+      process.env.PROCURE_KEEPERHUB_EXECUTION_MODE || fileConfig.keeperHubExecutionMode || DEFAULTS.keeperHubExecutionMode,
+    registryAddress: process.env.PROCURE_REGISTRY_ADDRESS || fileConfig.registryAddress || DEFAULTS.registryAddress,
+    rpcUrl: process.env.PROCURE_RPC_URL || fileConfig.rpcUrl || DEFAULTS.rpcUrl,
   };
 }
 
