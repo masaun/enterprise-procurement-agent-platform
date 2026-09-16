@@ -95,6 +95,12 @@ itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
 four independent, self-contained projects (each with its own dependency
 management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 
+### Deployed contracts
+
+| Contract | Address (Base Sepolia) |
+| --- | --- |
+| [`ProcurementRegistry.sol`](contracts/src/ProcurementRegistry.sol) | [`0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623`](https://sepolia.basescan.org/address/0xdf33fdf3360fcf1923abb8c7e3ce3c51160c7623#code) |
+
 ## What's real vs. simulated
 
 | Piece | Status |
