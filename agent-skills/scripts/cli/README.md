@@ -1,14 +1,19 @@
-# `procure` — CLI for the Enterprise Procurement Agent
+# `procure` — CLI for the Enterprise Procurement Agent's actor
 
-A small dependency-light Node CLI wrapping `./app/api/agent`'s HTTP
-entrypoints, for an agent (or human operator) that can shell out to a
-command but not easily craft raw HTTP/SIWX calls itself. See
-[`../../SKILL.md`](../../SKILL.md) for the full behavioral skill and
-[`../../README.md`](../../README.md) for the package overview.
+A small dependency-light Node CLI that is now the **actor**, not just an
+HTTP client: `procure submit`/`act` read discovery and policy from
+`./app` (the management platform), then evaluate policy, execute via
+`@keeperhub/sdk`, write the on-chain receipt, and report back — all locally,
+using this agent's own credentials. See [`../../SKILL.md`](../../SKILL.md)
+for the full behavioral skill and [`../../README.md`](../../README.md) for
+the package overview.
 
-Every command below is paired with the raw `curl` call it is equivalent to,
-so you can bypass the CLI entirely if your agent framework only shells out
-to plain HTTP. Both hit the exact same underlying logic — see `src/api.ts`.
+Most read-only commands below are paired with the raw `curl` call they're
+equivalent to, so you can bypass the CLI entirely if your agent framework
+only shells out to plain HTTP. `submit`/`act` don't have a single-`curl`
+equivalent anymore — they're a local pipeline of several HTTP reads, a
+KeeperHub SDK call, and an on-chain write, not one call — see each command's
+own section below for how to reproduce the individual steps.
 
 ## Install
 
@@ -31,15 +36,22 @@ to rebuild. Run `npm run typecheck` to type-check without emitting anything.
 ## Configuration
 
 ```bash
-export PROCURE_BASE_URL="http://localhost:3000"   # default shown
-export PROCURE_PRIVATE_KEY="0x..."                # your EOA signing key, for real SIWX auth
-export PROCURE_MCP_API_KEY="..."                  # only if the server's /api/agent/mcp requires it
-export PROCURE_CHAIN_ID="84532"                   # default shown, bare chain id used to build eip155:<id>
+export PROCURE_BASE_URL="http://localhost:3000"      # default shown — the platform's URL
+export PROCURE_PRIVATE_KEY="0x..."                   # your EOA key — SIWX auth AND the on-chain receipt write
+export PROCURE_MCP_API_KEY="..."                     # only if the platform's /api/agent/mcp requires it
+export PROCURE_CHAIN_ID="84532"                      # default shown, bare chain id used to build eip155:<id>
+export PROCURE_KEEPERHUB_API_KEY="kh_..."            # your own KeeperHub org key — unset = demo mode
+export PROCURE_KEEPERHUB_BASE_URL="https://app.keeperhub.com"  # default shown
+export PROCURE_KEEPERHUB_EXECUTION_MODE="direct"     # default shown
+export PROCURE_REGISTRY_ADDRESS="0x..."              # deployed ProcurementRegistry (../../../contracts) — unset = on-chain write skipped
+export PROCURE_RPC_URL="https://sepolia.base.org"    # default shown
 ```
 
-Same three keys (`baseUrl`, `privateKey`, `mcpApiKey`) can instead be
-persisted to `~/.procure/config.json` via `procure config set <key> <value>`;
-env vars win when both are set. The `curl` examples below assume:
+Same keys (`baseUrl`, `privateKey`, `mcpApiKey`, `keeperHubApiKey`,
+`keeperHubBaseUrl`, `keeperHubExecutionMode`, `registryAddress`, `rpcUrl`)
+can instead be persisted to `~/.procure/config.json` via
+`procure config set <key> <value>`; env vars win when both are set. The
+`curl` examples below assume:
 
 ```bash
 BASE_URL="${PROCURE_BASE_URL:-http://localhost:3000}"
@@ -86,7 +98,9 @@ curl -s -X POST "$BASE_URL/api/agent/entrypoints/discover/invoke" \
 
 ### `procure policy`
 
-Shows the enterprise's current KeeperHub-enforced policy.
+Shows the enterprise's current, admin-editable policy — **you** are
+responsible for evaluating candidates against it yourself (`src/policy.ts`);
+the platform no longer enforces it on your behalf at execution time.
 
 ```bash
 procure policy
@@ -131,27 +145,53 @@ challenge -> sign -> retry cycle for you with a real `viem` signer.
 
 ### `procure submit --instruction <text> --amount <n> [--asset USDC] [--min-apy 4.0] [--protocol <name...>]`
 
-Runs the full procurement pipeline. Same SIWX gating as `auth` above — the
-first call 401s, then you retry with a signed `SIGN-IN-WITH-X` header.
+Runs the whole pipeline **locally**, not as one HTTP call — there's no
+single `curl` equivalent anymore. What it actually does, step by step (see
+`src/orchestrate.ts:runProcurementLocally`):
 
 ```bash
 procure submit \
   --instruction "Move 1,000,000 USDC to an approved lending protocol, but only if APY > 4%." \
   --amount 1000000 --asset USDC --min-apy 4.0
 ```
+
+is equivalent to:
+
 ```bash
-curl -s -X POST "$BASE_URL/api/agent/entrypoints/procure/invoke" \
+# 1. read discovery + policy (same as `procure discover` / `procure policy` above)
+curl -s -X POST "$BASE_URL/api/agent/entrypoints/discover/invoke" -H "Content-Type: application/json" -d '{"input":{}}'
+curl -s -X POST "$BASE_URL/api/agent/entrypoints/policy/invoke" -H "Content-Type: application/json" -d '{"input":{}}'
+
+# 2. evaluatePolicy() over every offer, locally (src/policy.ts) — pick the best eligible one
+
+# 3. execute via @keeperhub/sdk's DirectExecutor.checkAndExecute(), locally, with
+#    YOUR OWN PROCURE_KEEPERHUB_API_KEY — no curl equivalent, this is a direct SDK call
+
+# 4. write the receipt on-chain: ProcurementRegistry.recordProcurement(...) via viem,
+#    signed with YOUR OWN PROCURE_PRIVATE_KEY — no curl equivalent, this is an on-chain tx
+
+# 5. report the result, SIWX-signed (same challenge/retry shape as `procure auth` above)
+curl -s -X POST "$BASE_URL/api/agent/entrypoints/report/invoke" \
   -H "Content-Type: application/json" \
   -H "SIGN-IN-WITH-X: <base64 of { info, address, signature }>" \
-  -d '{
-        "input": {
-          "instruction": "Move 1,000,000 USDC to an approved lending protocol, but only if APY > 4%.",
-          "asset": "USDC",
-          "amount": "1000000",
-          "minApyBps": 400
-        }
-      }'
+  -d '{"input": { "taskId": "...", "status": "completed", "request": {...}, "timeline": [...], "execution": {...} }}'
+# -> rejected (500, "agent_not_authorized") unless your address is already
+#    on ProcurementRegistry's on-chain authorizedAgents allowlist
 ```
+
+### `procure act [--payload <file|->]`
+
+Same pipeline as `submit` above, but reads a `ProcurementRequest`-shaped
+JSON payload from a file or stdin instead of CLI flags — this is the
+command a webhook-triggered automation (Hermes prompt tool, OpenClaw
+`run_task`) shells out to:
+
+```bash
+echo '{"instruction":"Move 1M USDC...","asset":"USDC","amount":"1000000","minApyBps":400}' | procure act --payload -
+procure act --payload webhook-payload.json
+```
+
+No `curl` equivalent — same reasoning as `submit`.
 
 ### `procure task <taskId>`
 
@@ -194,7 +234,8 @@ same way `src/api.ts` does.
 ### `procure config get` / `procure config set <key> <value>`
 
 No HTTP equivalent — these only read/write `~/.procure/config.json` on
-disk (`baseUrl`, `privateKey`, `mcpApiKey`).
+disk (`baseUrl`, `privateKey`, `mcpApiKey`, `keeperHubApiKey`,
+`keeperHubBaseUrl`, `keeperHubExecutionMode`, `registryAddress`, `rpcUrl`).
 
 ## See also
 
@@ -202,8 +243,11 @@ disk (`baseUrl`, `privateKey`, `mcpApiKey`).
   step paired with its natural-language phrasing (for a human prompting
   through a messaging gateway like Telegram) and its `procure` command.
 - [`../../references/protocols.md`](../../references/protocols.md) — exact
-  SIWX wire format (challenge shape, header encoding, CAIP-2 chain ids).
+  SIWX wire format, ERC-8004 gate mechanics, KeeperHub's guarded execution,
+  and each webhook platform's exact signature scheme.
 - [`../../references/api-reference.md`](../../references/api-reference.md) —
   every HTTP entrypoint, request/response shapes, error modes.
 - [`../../references/mcp-tools.md`](../../references/mcp-tools.md) — the
-  full MCP tool list and the MCP trust-boundary note.
+  read-only MCP tool list and the MCP trust-boundary note.
+- [`../../../contracts/README.md`](../../../contracts/README.md) —
+  `ProcurementRegistry.sol`, what `PROCURE_REGISTRY_ADDRESS` points at.

@@ -6,21 +6,28 @@ import { payments, paymentsFromEnv } from "@lucid-agents/payments";
 import { a2a } from "@lucid-agents/a2a";
 import { ap2 } from "@lucid-agents/ap2";
 import { z } from "zod";
-import { ProcurementRequestSchema } from "@/lib/types";
-import { discoverOffers, runProcurement } from "@/lib/lucid/orchestrate";
-import { getTask } from "@/lib/store";
+import { ProcurementReportSchema, type ProcurementTask } from "@/lib/types";
+import { discoverOffers } from "@/lib/lucid/orchestrate";
+import { getTask, saveTask } from "@/lib/store";
 import { getConfiguredPolicy } from "@/lib/keeperhub/policy";
+import { isAgentAuthorizedOnChain, isRegistryConfigured } from "@/lib/chain/registry";
+import type { Address } from "viem";
 
 /**
- * The Procurement Agent: the one Lucid Agent runtime this whole app is built
- * around. `app/api/agent/[...lucid]/route.ts` mounts `runtime.http.routes`
- * directly, so every entrypoint below is reachable as real A2A/HTTP:
+ * The Procurement Agent's remaining agent-facing surface — now a
+ * management-platform contract, not an execution one. `app/api/agent/[...lucid]/route.ts`
+ * mounts `runtime.http.routes` directly, so every entrypoint below is
+ * reachable as real A2A/HTTP:
  *
  *   GET  /api/agent/.well-known/agent-card.json   (A2A discovery + ERC-8004 + AP2)
  *   POST /api/agent/entrypoints/authenticate/invoke   (SIWX, auth-only)
- *   POST /api/agent/entrypoints/procure/invoke        (the whole pipeline)
- *   POST /api/agent/entrypoints/discover/invoke       (A2A preview, no purchase)
- *   GET  /api/agent/entrypoints/policy/invoke         (current KeeperHub policy)
+ *   POST /api/agent/entrypoints/discover/invoke       (A2A preview — platform-hosted market data)
+ *   GET  /api/agent/entrypoints/policy/invoke         (current policy, read-only for agents)
+ *   POST /api/agent/entrypoints/report/invoke         (SIWX + on-chain ERC-8004 allowlist gated —
+ *                                                       an external agent reports a procurement it
+ *                                                       already executed itself; replaces the old
+ *                                                       `procure` entrypoint, which used to run the
+ *                                                       whole pipeline server-side)
  *   POST /api/agent/tasks, GET /api/agent/tasks/:taskId, ...  (A2A tasks)
  */
 
@@ -116,17 +123,33 @@ function buildRuntime() {
       handler: async () => ({ output: getConfiguredPolicy() }),
     })
     .addEntrypoint({
-      key: "procure",
+      key: "report",
       description:
-        'Run the full procurement pipeline: SIWX auth -> A2A discovery -> ERC-8004 identity -> AP2 mandate -> KeeperHub policy + guarded execution ("only if APY > 4%").',
-      input: ProcurementRequestSchema,
+        "Report a procurement task this agent already discovered, evaluated against policy, executed via its own KeeperHub key, and recorded on-chain (ProcurementRegistry). Gated by SIWX plus the platform's on-chain ERC-8004 allowlist — see lib/identity/gate.ts and the /api/agents/authorized admin route that populates it.",
+      input: ProcurementReportSchema,
       siwx: { authOnly: true },
       handler: async ({ input, auth }) => {
-        const task = await runProcurement({
-          request: input,
-          enterpriseAddress: auth?.address,
-          origin: resolveAppOrigin(),
-        });
+        // `siwx: { authOnly: true }` above already rejects an unsigned/invalid
+        // request before this handler runs, so `auth.address` is guaranteed here.
+        if (!isRegistryConfigured()) {
+          throw new Error("registry_not_configured: PROCUREMENT_REGISTRY_ADDRESS is not set");
+        }
+        const authorized = await isAgentAuthorizedOnChain(auth!.address as Address);
+        if (!authorized) {
+          throw new Error(`agent_not_authorized: ${auth!.address} is not on the on-chain authorizedAgents allowlist`);
+        }
+        const now = new Date().toISOString();
+        const inputTimeline = (input as { timeline?: ProcurementTask["timeline"] }).timeline ?? [];
+        const task = {
+          ...input,
+          enterpriseAddress: input.enterpriseAddress ?? auth!.address,
+          timeline: [
+            ...inputTimeline,
+            { kind: "erc8004.gate_checked", label: `Verified ${auth!.address} against the on-chain authorizedAgents allowlist`, at: now },
+            { kind: "report.received", label: "Platform accepted the reported task for the dashboard", at: now },
+          ],
+        } as unknown as ProcurementTask;
+        saveTask(task);
         return { output: task };
       },
     })

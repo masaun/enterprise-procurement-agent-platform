@@ -6,8 +6,17 @@ import type { Policy, PolicyEvaluation, ProcurementRequest } from "@/lib/types";
  * decides *who* the enterprise could buy from, but KeeperHub is the layer
  * that enterprises actually trust with treasury movement, so it re-checks
  * the same constraints independently before execution.
+ *
+ * Now human-editable from the dashboard (`PATCH /api/policy`) rather than
+ * env-only — the env vars below still seed the initial value (and remain
+ * the only way to configure it before the server has taken its first
+ * request), but an admin edit persists in-process from then on. Evaluation
+ * itself now mostly runs on the external agent's own machine (see
+ * `agent-skills/scripts/cli/src/policy.ts`); this module is what that CLI
+ * fetches `GET /api/agent/entrypoints/policy/invoke` for, and is also
+ * re-run here as an audit check when the agent's report comes back in.
  */
-export function getConfiguredPolicy(): Policy {
+function seedPolicyFromEnv(): Policy {
   return {
     maxUsdPerTask: Number(process.env.POLICY_MAX_USD_PER_TASK ?? 1_000_000),
     minApyBps: Number(process.env.POLICY_MIN_APY_BPS ?? 400),
@@ -20,6 +29,18 @@ export function getConfiguredPolicy(): Policy {
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean),
   };
+}
+
+let currentPolicy: Policy | undefined;
+
+export function getConfiguredPolicy(): Policy {
+  if (!currentPolicy) currentPolicy = seedPolicyFromEnv();
+  return currentPolicy;
+}
+
+export function updatePolicy(patch: Partial<Policy>): Policy {
+  currentPolicy = { ...getConfiguredPolicy(), ...patch };
+  return currentPolicy;
 }
 
 export function evaluatePolicy(

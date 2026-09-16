@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { loadConfig, setConfigValue, configPath } from "../src/config.ts";
 import * as api from "../src/api.ts";
+import { runProcurementLocally, requestFromWebhookPayload } from "../src/orchestrate.ts";
 
 const program = new Command();
 
@@ -102,7 +104,9 @@ program
 
 program
   .command("submit")
-  .description('Submit a procurement request, e.g. "Move 1M USDC to an approved lending protocol, but only if APY > 4%."')
+  .description(
+    'Run a procurement request end-to-end, on THIS machine: discover providers + fetch policy from the platform, evaluate policy locally, execute via this agent\'s own KeeperHub key, write the receipt on-chain, and report the result to the platform\'s dashboard. e.g. "Move 1M USDC to an approved lending protocol, but only if APY > 4%."',
+  )
   .requiredOption("--instruction <text>", "natural-language instruction")
   .requiredOption("--amount <amount>", "amount to move")
   .option("--asset <asset>", "asset symbol", "USDC")
@@ -127,13 +131,33 @@ program
           minApyBps: Math.round(parseFloat(opts.minApy) * 100),
           ...(opts.protocol ? { allowedProtocols: opts.protocol } : {}),
         };
-        const result = await api.submitProcurement(config, request);
-        report("procurement task submitted", result.output, opts.json);
+        const task = await runProcurementLocally(config, request);
+        report("procurement task completed", task, opts.json);
       } catch (e) {
         fail(e as Error, opts.json);
       }
     },
   );
+
+program
+  .command("act")
+  .description(
+    "Act on a procurement intent received via webhook (Hermes prompt-triggered shell tool, OpenClaw run_task, or any automation) — reads the same JSON payload the platform's dispatcher sends and runs the identical pipeline as `submit`.",
+  )
+  .option("--payload <fileOrDash>", "path to a JSON file with the webhook payload, or '-' for stdin", "-")
+  .option("--json", "machine-readable output")
+  .action(async (opts: { payload: string; json?: boolean }) => {
+    const config = loadConfig();
+    try {
+      const raw = opts.payload === "-" ? readFileSync(0, "utf8") : readFileSync(opts.payload, "utf8");
+      const payload = JSON.parse(raw);
+      const request = requestFromWebhookPayload(payload);
+      const task = await runProcurementLocally(config, request);
+      report("procurement task completed (from webhook payload)", task, opts.json);
+    } catch (e) {
+      fail(e as Error, opts.json);
+    }
+  });
 
 program
   .command("task <taskId>")
