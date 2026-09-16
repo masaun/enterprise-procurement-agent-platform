@@ -19,6 +19,12 @@ forge build
 forge test -vvv
 ```
 
+Or run the `ProcurementRegistry` suite directly, from anywhere:
+
+```bash
+./contracts/tests/ProcurementRegistry.t.sh
+```
+
 ## Deploy to Base Sepolia
 
 ```bash
