@@ -13,8 +13,8 @@ import type { CliConfig } from "./config.ts";
 export type ProviderOfferForExecution = {
   network: string;
   apyBps: number;
-  rateContract: { address: string; functionName: string; functionArgs?: string };
-  supplyContract: { address: string; functionName: string; argsTemplate: string };
+  rateContract: { address: string; functionName: string; functionArgs?: string; abi?: string };
+  supplyContract: { address: string; functionName: string; argsTemplate: string; abi?: string };
   registration: { agentRegistry: string };
 };
 
@@ -81,6 +81,7 @@ export async function checkApyAndExecuteSupply(
     contractAddress: provider.rateContract.address,
     functionName: provider.rateContract.functionName,
     functionArgs: provider.rateContract.functionArgs,
+    abi: provider.rateContract.abi,
   });
   if (!isReadResult(baseline) || typeof baseline.result !== "string") {
     throw new Error(
@@ -93,6 +94,7 @@ export async function checkApyAndExecuteSupply(
     contractAddress: provider.rateContract.address,
     functionName: provider.rateContract.functionName,
     functionArgs: provider.rateContract.functionArgs,
+    abi: provider.rateContract.abi,
     condition: { operator: "gte", value: baseline.result },
     action: {
       network,
@@ -103,6 +105,11 @@ export async function checkApyAndExecuteSupply(
         amount,
         onBehalfOf: provider.registration.agentRegistry,
       }),
+      // Pins the exact overload (see ProviderOffer["supplyContract"]["abi"]'s
+      // doc comment) — without this, KeeperHub's auto-fetched explorer ABI
+      // can match more than one function of the same name and refuses to
+      // guess which one to call.
+      abi: provider.supplyContract.abi,
     },
   });
 

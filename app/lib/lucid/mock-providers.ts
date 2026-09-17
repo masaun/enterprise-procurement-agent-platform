@@ -56,6 +56,24 @@ export const MOCK_PROVIDERS: MockProviderSpec[] = [
       // supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) — asset is
       // this market's real USDC address (not a template: Pool.supply needs a token address, not a ticker).
       argsTemplate: '["0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f", "{{amount}}", "{{onBehalfOf}}", 0]',
+      // Aave v3's Pool proxy also exposes an unrelated supply(bytes32) overload
+      // (an internal/admin function), so KeeperHub's auto-fetched explorer ABI
+      // can't tell which "supply" we mean and refuses to guess. Pinning the
+      // exact 4-arg overload here resolves it deterministically.
+      abi: JSON.stringify([
+        {
+          inputs: [
+            { internalType: "address", name: "asset", type: "address" },
+            { internalType: "uint256", name: "amount", type: "uint256" },
+            { internalType: "address", name: "onBehalfOf", type: "address" },
+            { internalType: "uint16", name: "referralCode", type: "uint16" },
+          ],
+          name: "supply",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+      ]),
     },
   },
   {

@@ -51,6 +51,8 @@ export type ProviderOffer = {
     address: string;
     functionName: string;
     functionArgs?: string;
+    /** JSON ABI fragment array, only needed when `functionName` is ambiguous on the auto-fetched explorer ABI (overloads). */
+    abi?: string;
   };
   /**
    * KeeperHub DirectExecutor.checkAndExecute() write-side: the guarded
@@ -63,6 +65,15 @@ export type ProviderOffer = {
     address: string;
     functionName: string;
     argsTemplate: string;
+    /**
+     * JSON ABI fragment array pinning the exact overload to call. KeeperHub
+     * auto-fetches a contract's ABI from the explorer when this is omitted,
+     * and refuses to guess when `functionName` matches more than one
+     * overload (e.g. Aave v3 Pool's `supply(address,uint256,address,uint16)`
+     * vs `supply(bytes32)`) — see agent-demo/README.md's troubleshooting
+     * section for the real error this produced.
+     */
+    abi?: string;
   };
 };
 

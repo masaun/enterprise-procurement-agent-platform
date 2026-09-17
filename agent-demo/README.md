@@ -309,7 +309,7 @@ flowchart TB
 | `PROCUREMENT_REGISTRY_ADDRESS` in `app/.env.local` | **Missing** — panel returns `503` | Set to the deployed contract, `0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623` (see root [`README.md`](../README.md#deployed-contracts)). |
 | `CONTRACT_OWNER_PRIVATE_KEY` in `app/.env.local` | **Missing** | Set to the key that deployed/owns `ProcurementRegistry.sol` — administers the allowlist only, never touches treasury funds. |
 | `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Set** (a fixed EOA, not a throwaway-per-run key) | Needs Base Sepolia ETH for gas — see the troubleshooting section below; it has none yet. |
-| An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Register via `@lucid-agents/identity` (see its `README.md` — `createAgentIdentity` / the `identity()` runtime extension) against `PROCURE_PRIVATE_KEY`'s wallet; the resulting `agentId` + wallet address are what you type into the dashboard's "Authorized agents" form. |
+| An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Set `AGENT_IDENTITY_PRIVATE_KEY` in `app/.env.local` to the **same key** as `PROCURE_PRIVATE_KEY` above, then use the dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`POST /api/agents/identity`) to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
 
 Until all four rows are done, the "Authorized agents" panel — and therefore
 `agent-demo`'s (or `procure`'s) on-chain `recordProcurement()` write and its
@@ -376,22 +376,57 @@ now returns a complete, valid JSON task instead of crashing — status
 `"completed"` for the KeeperHub leg, with the on-chain write's failure
 recorded cleanly in the timeline rather than throwing.
 
-### What's still open (not yet fixed, by design — see the questions above)
+### Fix #3: the Aave v3 `supply()` ABI-overload ambiguity
 
-Diagnosing this surfaced three separate, still-open issues — none of them
-about the wallet *type*:
+Also fixed, and re-verified with a real (non-demo) `procure act` call.
+Aave v3's Pool proxy exposes two functions named `supply` — the real
+`supply(address,uint256,address,uint16)` and an unrelated `supply(bytes32)`
+— so KeeperHub's auto-fetched explorer ABI couldn't tell which one
+`aave-v3-gateway`'s config meant and refused to guess:
+
+```
+"Function 'supply' matches 2 overloads in this ABI, so the one to call cannot
+be determined. Re-select the function to store its full signature:
+supply(address,uint256,address,uint16), supply(bytes32)"
+```
+
+| File | Change |
+| --- | --- |
+| [`app/lib/types.ts`](../app/lib/types.ts) | Added an optional `abi?: string` field to `ProviderOffer["rateContract"]`/`["supplyContract"]` (a JSON ABI-fragment array). |
+| [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts) | `aave-v3-gateway.supplyContract` now carries the exact `supply(address,uint256,address,uint16)` ABI fragment, pinning the overload. |
+| [`agent-skills/scripts/cli/src/keeperhub.ts`](../agent-skills/scripts/cli/src/keeperhub.ts) | `checkApyAndExecuteSupply` now threads `provider.rateContract.abi`/`provider.supplyContract.abi` into both the baseline `callContract()` read and `checkAndExecute()`'s `action` call. |
+
+Re-running `procure act` after this fix, the ABI error is gone entirely —
+KeeperHub's real API now gets as far as attempting the actual gas
+estimation for the `supply()` transaction, and fails only on:
+
+```
+"Insufficient BASE balance. Have: 0.0, Need: 0.000000231.
+Fund 0xbc44e17797048d137b6be6aa2651af89a4248218 with at least
+0.000000231 BASE on this chain and retry."
+```
+
+(`BASE` here is KeeperHub's own API wording for "this chain's native gas
+currency" — Base and Base Sepolia use **ETH** as their native token, same as
+Ethereum mainnet and other OP Stack chains; there is no separate "BASE"
+coin. The amount needed is `0.000000231 ETH`.)
+
+### What's still open
+
+Two funding gaps and one authorization gap remain — none of them about the
+wallet *type*, and none of them require further code changes:
 
 | # | Issue | Evidence |
 | --- | --- | --- |
-| 1 | The Aave v3 `supply()` call is ambiguous to KeeperHub's auto-fetched ABI. | Real API response: `"Function 'supply' matches 2 overloads in this ABI, so the one to call cannot be determined... supply(address,uint256,address,uint16), supply(bytes32)"`. [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts)'s `aave-v3-gateway.supplyContract` calls it by bare name with no explicit `abi`. |
-| 2 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`) has **0 Base Sepolia ETH**. | Real revert: `gas required exceeds allowance (0)` from `recordProcurement()`. |
-| 3 | That wallet also isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist. | Blocked upstream of that — `app/.env.local` is still missing `PROCUREMENT_REGISTRY_ADDRESS`/`CONTRACT_OWNER_PRIVATE_KEY` (see the "Authorized agents" table above), so the dashboard panel that would authorize it can't run yet either. |
+| 1 | KeeperHub's own execution wallet (`0xbc44e17797048d137b6be6aa2651af89a4248218` — a different address from `PROCURE_PRIVATE_KEY`'s) has **0 Base Sepolia ETH** for gas. | Real error above: needs a negligible `0.000000231 ETH` to broadcast the guarded `supply()` write. |
+| 2 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`, `0xd3BFFc0CD419344649deC61f08912a4Af283E1a6`) also has **0 Base Sepolia ETH**. | Real revert: `gas required exceeds allowance (0)` from `recordProcurement()`. |
+| 3 | That same wallet also isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist. | Real revert once funded: the contract's own `NotAuthorizedAgent`. `app/.env.local` now has `PROCUREMENT_REGISTRY_ADDRESS` set, but `CONTRACT_OWNER_PRIVATE_KEY` (needed to actually call `addAuthorizedAgent`) is still empty, so the dashboard's "Authorized agents" panel can't run yet either. |
 
-Notably, KeeperHub's real API call in this trace *did* succeed at its own
-job — it read Aave's on-chain rate and confirmed the liveness condition
-(`"conditionResult":{"met":true,...}`) — so the org's KeeperHub execution
-wallet itself is funded and working. The remaining failures are specific,
-addressable bugs/config gaps, not a wallet-architecture problem.
+Once both wallets hold a small amount of Base Sepolia ETH (from any public
+faucet — no real funds, this is a testnet) and `test_opera_1` is authorized
+via the dashboard, `procure act`/`submit` and `agent-demo` should complete
+the full pipeline: KeeperHub execution, the on-chain receipt write, and the
+report back to `./app`.
 
 ## Relationship to `./agent-skills/scripts/cli`
 
