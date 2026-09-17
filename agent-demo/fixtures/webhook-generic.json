@@ -9,7 +9,7 @@
     "maxUsdPerTask": 2,
     "minApyBps": 100,
     "allowedAssets": ["USDC"],
-    "allowedProtocols": ["aave-v3", "compound-v3", "morpho"]
+    "allowedProtocols": ["aave-v3"]
   },
   "enterpriseId": "default-enterprise"
 }

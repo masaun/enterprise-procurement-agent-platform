@@ -198,10 +198,51 @@ flowchart LR
 
 | # | Panel | Reaches `agent-demo`? | What to enter today |
 | --- | --- | --- | --- |
-| 1 | **KeeperHub policy** | Indirectly — this agent fetches it read-only via `GET /api/agent/entrypoints/policy/invoke` once it acts. | Already seeded from `app/.env.local`: Max USD/task `2`, Min APY `1.00`, Allowed assets `USDC`, Allowed protocols `aave-v3, compound-v3, morpho`. Matches `fixtures/webhook-generic.json` — leave as-is. |
+| 1 | **KeeperHub policy** | Indirectly — this agent fetches it read-only via `GET /api/agent/entrypoints/policy/invoke` once it acts. | Already seeded from `app/.env.local`: Max USD/task `2`, Min APY `1.00`, Allowed assets `USDC`, Allowed protocols `aave-v3` only. Matches `fixtures/webhook-generic.json` — leave as-is. |
 | 2 | **Procurement intent** | Only via panel 3's dispatch — doesn't execute anything itself. | Instruction `Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.`, Asset `USDC`, Amount `2`, Min APY `1.0` (all defaults). |
 | 3 | **Webhook subscribers** | **No** — see below. | N/A as a live wire; see the two-step flow below instead. |
 | 4 | **Authorized agents** | N/A (this is `./app` gating *incoming* on-chain writes from any agent, not something this package calls) | Needs real on-chain setup before it accepts anything meaningful — see below. |
+
+### Why "Allowed protocols" is restricted to `aave-v3`
+
+The policy's `allowedProtocols` seed intentionally excludes `compound-v3`
+and `morpho`, even though `./app` still discovers all three as candidate
+providers. This isn't a preference — it's required for a run to ever reach
+a successful KeeperHub execution.
+
+| Protocol | Seeded APY (`app/lib/lucid/mock-providers.ts`) | Contract on Base Sepolia | Included in policy? |
+| --- | --- | --- | --- |
+| `morpho` | 5.60% (highest) | **Fake/illustrative** address — no real deployment exists to point to | No |
+| `compound-v3` | 4.80% | **Fake/illustrative** address — no usable Base Sepolia testnet deployment (confirmed against Compound's own repos/APIs) | No |
+| `aave-v3` | 3.20% (lowest) | **Real, verified** Aave v3 Pool proxy (from `aave-dao/aave-address-book`) | **Yes** |
+
+The reason this matters is the CLI's offer-selection order in
+[`agent-skills/scripts/cli/src/orchestrate.ts`](../agent-skills/scripts/cli/src/orchestrate.ts) —
+it sorts every *policy-eligible* offer by APY, descending, and executes
+against whichever comes out on top:
+
+```mermaid
+flowchart TB
+    Discover["Discover offers\n(A2A, all 3 providers)"] --> Filter["Filter to policy-eligible\n(asset + protocol + min APY)"]
+    Filter --> Sort["Sort eligible offers\nby APY, descending"]
+    Sort --> Pick["Pick offers[0]\n(highest APY)"]
+
+    Pick --> Check{"Is picked protocol\naave-v3?"}
+    Check -->|"morpho or compound-v3\nallowed in policy"| Fake["Fake gateway contract address\n-> KeeperHub can't fetch its ABI\n-> execution fails every time"]
+    Check -->|"aave-v3\n(only protocol left when\npolicy excludes the other two)"| Real["Real, verified Aave v3 Pool\n-> KeeperHub executes for real"]
+
+    style Fake stroke:#c0392b
+    style Real stroke:#27ae60
+```
+
+Because the selection logic always prefers the highest APY among whatever
+the policy allows, leaving `compound-v3`/`morpho` in `allowedProtocols`
+means they win the sort (5.60% / 4.80% > Aave's 3.20%) and the run reaches
+KeeperHub only to fail fetching an ABI for an address that was never a real
+contract. Restricting the policy to `allowedProtocols=aave-v3` removes them
+from the eligible set entirely, so the sort has only one candidate left —
+the one gateway with a real, verified Base Sepolia contract — and the run
+can complete the KeeperHub step instead of failing on it deterministically.
 
 ### Why "Webhook subscribers" doesn't reach `agent-demo`
 
