@@ -106,16 +106,25 @@ export async function checkApyAndExecuteSupply(
     },
   });
 
+  // KeeperHub's real `checkAndExecute` omits `condition` on some failed/errored
+  // executions (e.g. the org wallet lacking funds/allowance for the action
+  // leg) even though the SDK's type declares it as always present. Treat a
+  // missing condition as "not executed" with the API's own status/error
+  // surfaced, instead of throwing — an uncaught TypeError here previously
+  // propagated all the way up through orchestrate.ts uncaught, crashing the
+  // whole `procure act`/`submit` call with no useful message.
   return {
     mode: "direct",
     executed: result.executed,
     executionId: result.executionId,
-    status: result.status ?? (result.executed ? "success" : "skipped"),
-    condition: {
-      met: result.condition.met,
-      observedValue: String(result.condition.observedValue),
-      targetValue: String(result.condition.targetValue),
-    },
+    status: result.status ?? (result.executed ? "success" : result.condition ? "skipped" : "error"),
+    condition: result.condition
+      ? {
+          met: result.condition.met,
+          observedValue: String(result.condition.observedValue),
+          targetValue: String(result.condition.targetValue),
+        }
+      : undefined,
     idempotencyKey,
     raw: result,
   };

@@ -308,12 +308,90 @@ flowchart TB
 | --- | --- | --- |
 | `PROCUREMENT_REGISTRY_ADDRESS` in `app/.env.local` | **Missing** — panel returns `503` | Set to the deployed contract, `0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623` (see root [`README.md`](../README.md#deployed-contracts)). |
 | `CONTRACT_OWNER_PRIVATE_KEY` in `app/.env.local` | **Missing** | Set to the key that deployed/owns `ProcurementRegistry.sol` — administers the allowlist only, never touches treasury funds. |
-| `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Empty** — a throwaway wallet is generated per run, which can never be authorized (it changes every invocation) | Generate a fixed EOA key and set it here so this agent has a stable, authorizable wallet address. |
+| `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Set** (a fixed EOA, not a throwaway-per-run key) | Needs Base Sepolia ETH for gas — see the troubleshooting section below; it has none yet. |
 | An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Register via `@lucid-agents/identity` (see its `README.md` — `createAgentIdentity` / the `identity()` runtime extension) against `PROCURE_PRIVATE_KEY`'s wallet; the resulting `agentId` + wallet address are what you type into the dashboard's "Authorized agents" form. |
 
 Until all four rows are done, the "Authorized agents" panel — and therefore
 `agent-demo`'s (or `procure`'s) on-chain `recordProcurement()` write and its
 `report/invoke` call — will fail.
+
+## Troubleshooting: a live `webhook`/`instruct` run exhausts its tool-call budget
+
+A real run against this package's own env (a configured `PROCURE_KEEPERHUB_API_KEY`
+and `PROCURE_REGISTRY_ADDRESS`, both already set in `agent-demo/.env`) can fail
+with `✗ Exceeded maxToolIterations (12) without a final report from the LLM.` —
+the LLM never crashes outright, but `run_procure act`/`submit` keeps handing it
+an unrecoverable error, so it flails (re-checking config, retrying with
+different args) instead of reporting a clean failure. This section is the
+result of actually tracing that failure end to end, including two code fixes
+already applied in this repo.
+
+### It's not the wallet type
+
+The first hypothesis was that KeeperHub's ["Agentic Wallet"](https://docs.keeperhub.com/agent/agentic-wallet)
+(`@keeperhub/wallet`, Turnkey-backed) should replace `PROCURE_PRIVATE_KEY`.
+Inspecting the actual package (`npm pack @keeperhub/wallet` and reading its
+`dist/index.d.ts`) ruled that out:
+
+| Fact | Detail |
+| --- | --- |
+| What it's actually for | Its own `package.json` description: *"auto-pay x402 and MPP 402 responses with a server-side Turnkey proxy"* — an agent-IDE hook (Claude Code/Cursor/etc.) that auto-pays HTTP `402 Payment Required` challenges, not a general contract-call signer. |
+| Its exported API | `createPaymentSigner`, `parseX402Challenge`, `parseMppChallenge`, `checkBalance`, `fund()`, `createPreToolUseHook()` — nothing resembling `signTransaction`/`signMessage` for an arbitrary contract call. |
+| Chains it supports | Base **mainnet** (8453) and Tempo only — **not Base Sepolia** (84532), where `ProcurementRegistry` and the Aave v3 gateway actually live. |
+
+`ProcurementRegistry.recordProcurement()` also checks `msg.sender` directly
+([`contracts/src/ProcurementRegistry.sol:87`](../contracts/src/ProcurementRegistry.sol#L87)),
+so whatever wallet calls it must itself be on the allowlist — a raw EOA via
+`PROCURE_PRIVATE_KEY` is the correct mechanism here, not a replacement to fix.
+
+### The two real bugs (both fixed)
+
+Tracing one real, non-demo-mode `procure act` call (`PROCURE_KEEPERHUB_API_KEY`
+and `PROCURE_REGISTRY_ADDRESS` both set — the same env this package already
+ships) surfaced two separate unhandled-exception bugs, each one enough on its
+own to crash the whole pipeline and derail the LLM's tool loop:
+
+```mermaid
+flowchart TB
+    Start["procure act"] --> Discover["Discover + evaluate policy"]
+    Discover --> KH["checkApyAndExecuteSupply()\nKeeperHub DirectExecutor.checkAndExecute()"]
+    KH --> Bug1{"result.condition\npresent?"}
+    Bug1 -->|"no (real API can omit it\non a failed action leg)"| Fixed1["FIXED: keeperhub.ts + orchestrate.ts\nnow treat this as a reported failure,\nnot a crash"]
+    Bug1 -->|yes| Record["recordProcurementOnChain()\nrecordProcurement() write"]
+    Record --> Bug2{"wallet funded\n+ authorized?"}
+    Bug2 -->|"no (today: 0 ETH,\nnot yet allowlisted)"| Fixed2["FIXED: orchestrate.ts now\ncatches this and reports\nchain.record_failed in the\ntimeline, instead of throwing"]
+    Bug2 -->|yes| Done["Recorded on-chain,\nreported to dashboard"]
+
+    style Fixed1 stroke:#27ae60
+    style Fixed2 stroke:#27ae60
+```
+
+| # | Bug | Where | Symptom before the fix | Fix |
+| --- | --- | --- | --- | --- |
+| 1 | KeeperHub's real `checkAndExecute` can return a result with no `condition` field (e.g. the action leg errored) even though the SDK's TypeScript type declares it as always present. | [`agent-skills/scripts/cli/src/keeperhub.ts`](../agent-skills/scripts/cli/src/keeperhub.ts) (`condition: { met: result.condition.met, ... }`) and [`orchestrate.ts`](../agent-skills/scripts/cli/src/orchestrate.ts) (`execution.condition!.met`) | `{"error":"Cannot read properties of undefined (reading 'met')"}` — an uncaught `TypeError` crashing the whole `act`/`submit` call. | Both now check for a missing `condition` and report a clean `keeperhub.execution_failed` timeline entry (with the API's own `raw` error attached) instead of throwing. |
+| 2 | `recordProcurementOnChain()`'s write call had no try/catch, so any revert (unfunded wallet, not-yet-authorized wallet, RPC error) propagated uncaught. | [`agent-skills/scripts/cli/src/orchestrate.ts`](../agent-skills/scripts/cli/src/orchestrate.ts) (`reportAndMaybeRecord`) | A viem revert (e.g. `gas required exceeds allowance (0)`) crashed the whole command instead of the task completing with a reported failure. | Now wrapped in try/catch; a failure is pushed as a `chain.record_failed` timeline entry and the rest of the pipeline (dashboard report attempt) still runs. |
+
+Verified with a real (non-demo) `procure act` call after both fixes: the CLI
+now returns a complete, valid JSON task instead of crashing — status
+`"completed"` for the KeeperHub leg, with the on-chain write's failure
+recorded cleanly in the timeline rather than throwing.
+
+### What's still open (not yet fixed, by design — see the questions above)
+
+Diagnosing this surfaced three separate, still-open issues — none of them
+about the wallet *type*:
+
+| # | Issue | Evidence |
+| --- | --- | --- |
+| 1 | The Aave v3 `supply()` call is ambiguous to KeeperHub's auto-fetched ABI. | Real API response: `"Function 'supply' matches 2 overloads in this ABI, so the one to call cannot be determined... supply(address,uint256,address,uint16), supply(bytes32)"`. [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts)'s `aave-v3-gateway.supplyContract` calls it by bare name with no explicit `abi`. |
+| 2 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`) has **0 Base Sepolia ETH**. | Real revert: `gas required exceeds allowance (0)` from `recordProcurement()`. |
+| 3 | That wallet also isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist. | Blocked upstream of that — `app/.env.local` is still missing `PROCUREMENT_REGISTRY_ADDRESS`/`CONTRACT_OWNER_PRIVATE_KEY` (see the "Authorized agents" table above), so the dashboard panel that would authorize it can't run yet either. |
+
+Notably, KeeperHub's real API call in this trace *did* succeed at its own
+job — it read Aave's on-chain rate and confirmed the liveness condition
+(`"conditionResult":{"met":true,...}`) — so the org's KeeperHub execution
+wallet itself is funded and working. The remaining failures are specific,
+addressable bugs/config gaps, not a wallet-architecture problem.
 
 ## Relationship to `./agent-skills/scripts/cli`
 

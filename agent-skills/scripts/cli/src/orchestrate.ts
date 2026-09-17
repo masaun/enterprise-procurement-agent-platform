@@ -87,17 +87,25 @@ export async function runProcurementLocally(config: CliConfig, request: Procurem
     minApyBps: requiredApyBps,
     idempotencyKey,
   });
-  push(
-    "keeperhub.condition_checked",
-    execution.mode === "demo"
-      ? `KeeperHub (simulated) re-checked APY on-chain: observed ${(Number(execution.condition!.observedValue) / 100).toFixed(2)}% ${
-          execution.condition!.met ? ">=" : "<"
-        } required ${(Number(execution.condition!.targetValue) / 100).toFixed(2)}%`
-      : `KeeperHub re-read the reserve's on-chain rate right before broadcast as a liveness guard (the ${(requiredApyBps / 100).toFixed(2)}% APY threshold was already verified off-chain during policy evaluation): observed ${
-          execution.condition!.observedValue
-        } ${execution.condition!.met ? ">=" : "<"} baseline ${execution.condition!.targetValue}`,
-    execution.condition,
-  );
+  if (!execution.condition) {
+    push(
+      "keeperhub.execution_failed",
+      `KeeperHub's real API returned no condition result (status: ${execution.status}) — the guarded execution likely failed before or during the action leg (e.g. the org wallet lacking funds/allowance), not because the APY threshold wasn't met.`,
+      execution.raw,
+    );
+  } else {
+    push(
+      "keeperhub.condition_checked",
+      execution.mode === "demo"
+        ? `KeeperHub (simulated) re-checked APY on-chain: observed ${(Number(execution.condition.observedValue) / 100).toFixed(2)}% ${
+            execution.condition.met ? ">=" : "<"
+          } required ${(Number(execution.condition.targetValue) / 100).toFixed(2)}%`
+        : `KeeperHub re-read the reserve's on-chain rate right before broadcast as a liveness guard (the ${(requiredApyBps / 100).toFixed(2)}% APY threshold was already verified off-chain during policy evaluation): observed ${
+            execution.condition.observedValue
+          } ${execution.condition.met ? ">=" : "<"} baseline ${execution.condition.targetValue}`,
+      execution.condition,
+    );
+  }
 
   const status = execution.executed ? ("completed" as const) : ("failed" as const);
   if (execution.executed) {
@@ -140,23 +148,41 @@ async function reportAndMaybeRecord(
   // configured yet (e.g. before the contract is deployed).
   if (config.registryAddress) {
     const detailsHash = keccak256(toBytes(JSON.stringify(task)));
-    const chain = await recordProcurementOnChain(config, {
-      taskId: task.taskId,
-      enterprise,
-      status: task.status === "completed" ? "completed" : task.status === "rejected" ? "rejected" : "failed",
-      asset: (task as { request?: ProcurementRequest }).request?.asset ?? "USDC",
-      amount: BigInt((task as { request?: ProcurementRequest }).request?.amount ?? "0"),
-      apyBps,
-      detailsHash,
-      detailsURI: "",
-    });
-    task.onChainTransactionHash = chain.transactionHash;
-    task.timeline.push({
-      kind: "chain.recorded",
-      label: `Recorded receipt on-chain: ProcurementRegistry.recordProcurement() (tx ${chain.transactionHash})`,
-      detail: { transactionHash: chain.transactionHash, detailsHash },
-      at: new Date().toISOString(),
-    });
+    // Not wrapping this used to let an unfunded or not-yet-authorized wallet's
+    // revert (e.g. "gas required exceeds allowance (0)", or the contract's
+    // own NotAuthorizedAgent) propagate as an uncaught exception all the way
+    // out of `procure act`/`submit` — crashing the whole call instead of
+    // reporting a clean, actionable failure.
+    let chain: { transactionHash: Hex } | undefined;
+    try {
+      chain = await recordProcurementOnChain(config, {
+        taskId: task.taskId,
+        enterprise,
+        status: task.status === "completed" ? "completed" : task.status === "rejected" ? "rejected" : "failed",
+        asset: (task as { request?: ProcurementRequest }).request?.asset ?? "USDC",
+        amount: BigInt((task as { request?: ProcurementRequest }).request?.amount ?? "0"),
+        apyBps,
+        detailsHash,
+        detailsURI: "",
+      });
+    } catch (e) {
+      task.timeline.push({
+        kind: "chain.record_failed",
+        label: `Failed to record on-chain receipt: ${(e as Error).message.split("\n")[0]}`,
+        detail: { error: (e as Error).message },
+        at: new Date().toISOString(),
+      });
+      process.stderr.write(`warning: on-chain receipt write failed: ${(e as Error).message.split("\n")[0]}\n`);
+    }
+    if (chain) {
+      task.onChainTransactionHash = chain.transactionHash;
+      task.timeline.push({
+        kind: "chain.recorded",
+        label: `Recorded receipt on-chain: ProcurementRegistry.recordProcurement() (tx ${chain.transactionHash})`,
+        detail: { transactionHash: chain.transactionHash, detailsHash },
+        at: new Date().toISOString(),
+      });
+    }
   } else {
     process.stderr.write("warning: PROCURE_REGISTRY_ADDRESS not set — skipping on-chain receipt write.\n");
   }
