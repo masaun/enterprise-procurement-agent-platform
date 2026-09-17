@@ -86,6 +86,12 @@ export async function runProcurementLocally(config: CliConfig, request: Procurem
     amount: request.amount,
     minApyBps: requiredApyBps,
     idempotencyKey,
+    // This agent's own wallet should receive the protocol's receipt token
+    // (e.g. Aave's aToken) — not the provider's ERC-8004 registry identifier,
+    // which isn't even a valid address (see agent-demo/README.md's
+    // troubleshooting section for the "network does not support ENS" bug
+    // this caused when passed straight through).
+    onBehalfOf: account.address,
   });
   if (!execution.condition) {
     push(

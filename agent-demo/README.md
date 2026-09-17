@@ -311,6 +311,18 @@ flowchart TB
 | `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Set** (a fixed EOA, not a throwaway-per-run key) | Needs Base Sepolia ETH for gas — see the troubleshooting section below; it has none yet. |
 | An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Set `AGENT_IDENTITY_PRIVATE_KEY` in `app/.env.local` to the **same key** as `PROCURE_PRIVATE_KEY` above, then use the dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`POST /api/agents/identity`) to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
 
+`AGENT_IDENTITY_PRIVATE_KEY` and `PROCURE_PRIVATE_KEY` are two env vars in
+two different apps' env files, but they must hold the **same key** — one
+wallet, playing both roles:
+
+| | `AGENT_IDENTITY_PRIVATE_KEY` (`app/.env.local`) | `PROCURE_PRIVATE_KEY` (`agent-demo/.env`) |
+| --- | --- | --- |
+| Held by | `./app` (the enterprise's management platform) | `./agent-demo` (the external agent acting on the enterprise's behalf) |
+| Used for | Signing the one-time `POST /api/agents/identity` call — mints the ERC-8004 identity NFT via `IdentityRegistryClient.register()` | Signing SIWX auth challenges, executing via KeeperHub, and writing `ProcurementRegistry.recordProcurement()` |
+| Why it must sign | `register()` mints the new identity to whichever wallet signs the tx — there's no "register on behalf of" option | It's simply the agent's own operating wallet, used for every on-chain/auth action it takes |
+| Must equal | The agent's own wallet — i.e. it must match `PROCURE_PRIVATE_KEY` | The wallet whose identity gets registered and later authorized |
+| In production | Would normally *not* be held here at all — the agent operator would register their own identity and just hand the platform the resulting `agentId`/address (see [`app/README.md`](../app/README.md)'s server/caller-secrets table) | Always lives with the agent, never with the platform |
+
 Until all four rows are done, the "Authorized agents" panel — and therefore
 `agent-demo`'s (or `procure`'s) on-chain `recordProcurement()` write and its
 `report/invoke` call — will fail.
@@ -411,22 +423,96 @@ currency" — Base and Base Sepolia use **ETH** as their native token, same as
 Ethereum mainnet and other OP Stack chains; there is no separate "BASE"
 coin. The amount needed is `0.000000231 ETH`.)
 
+### Fix #4: `onBehalfOf` was the provider's registry identifier, not this agent's wallet
+
+Funding past the gas error above surfaced a fourth, more fundamental bug:
+`checkApyAndExecuteSupply` was filling Aave's `supply()` `onBehalfOf`
+parameter — the address that receives the resulting aTokens — with
+`provider.registration.agentRegistry`, e.g.
+`"eip155:84532:0x2e234dae75c793f67a35089c9d99245e1c58470b"`. That's wrong on
+two counts: it's the *provider's* ERC-8004 registry identifier, not this
+agent's own wallet, and it's a CAIP-2 string, not a plain `0x...` address —
+so when KeeperHub/viem tried to encode it as an `address`, it fell back to
+ENS resolution (the standard behavior for a non-hex-address string), which
+Base Sepolia doesn't support:
+
+```
+"network does not support ENS"
+```
+
+| File | Change |
+| --- | --- |
+| [`agent-skills/scripts/cli/src/keeperhub.ts`](../agent-skills/scripts/cli/src/keeperhub.ts) | `checkApyAndExecuteSupply` now takes an explicit `onBehalfOf` param and uses it instead of `provider.registration.agentRegistry`. |
+| [`agent-skills/scripts/cli/src/orchestrate.ts`](../agent-skills/scripts/cli/src/orchestrate.ts) | Passes `onBehalfOf: account.address` — this agent's own `PROCURE_PRIVATE_KEY`-derived wallet, the correct beneficial owner of the aTokens. |
+
+Re-verified live: the ENS error is gone, and the pipeline now gets all the
+way to attempting the real `supply()` transaction, failing only on:
+
+```
+"Contract call failed: Error(ERC20: transfer amount exceeds balance)"
+```
+
+— KeeperHub's execution wallet has no USDC to supply. A pure funding gap,
+one step further than before.
+
 ### What's still open
 
-Two funding gaps and one authorization gap remain — none of them about the
-wallet *type*, and none of them require further code changes:
+Two funding gaps and one authorization gap remain — none of them require
+further code changes:
 
 | # | Issue | Evidence |
 | --- | --- | --- |
-| 1 | KeeperHub's own execution wallet (`0xbc44e17797048d137b6be6aa2651af89a4248218` — a different address from `PROCURE_PRIVATE_KEY`'s) has **0 Base Sepolia ETH** for gas. | Real error above: needs a negligible `0.000000231 ETH` to broadcast the guarded `supply()` write. |
+| 1 | KeeperHub's own execution wallet (`0xbc44e17797048d137b6be6aa2651af89a4248218` — a different address from `PROCURE_PRIVATE_KEY`'s) has **0 Base Sepolia ETH** (for gas) **and 0 Base Sepolia USDC** (to actually supply). | Real errors above: `Need: 0.000000231` ETH, then `ERC20: transfer amount exceeds balance` once gas was no longer the blocker. |
 | 2 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`, `0xd3BFFc0CD419344649deC61f08912a4Af283E1a6`) also has **0 Base Sepolia ETH**. | Real revert: `gas required exceeds allowance (0)` from `recordProcurement()`. |
 | 3 | That same wallet also isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist. | Real revert once funded: the contract's own `NotAuthorizedAgent`. `app/.env.local` now has `PROCUREMENT_REGISTRY_ADDRESS` set, but `CONTRACT_OWNER_PRIVATE_KEY` (needed to actually call `addAuthorizedAgent`) is still empty, so the dashboard's "Authorized agents" panel can't run yet either. |
 
 Once both wallets hold a small amount of Base Sepolia ETH (from any public
-faucet — no real funds, this is a testnet) and `test_opera_1` is authorized
+faucet — no real funds, this is a testnet), KeeperHub's wallet also holds a
+little Base Sepolia USDC, and `test_opera_1` is authorized
 via the dashboard, `procure act`/`submit` and `agent-demo` should complete
 the full pipeline: KeeperHub execution, the on-chain receipt write, and the
 report back to `./app`.
+
+### Base Sepolia token addresses & faucets
+
+There are **two different "USDC" ERC-20 contracts** in play on Base Sepolia —
+sending the wrong one to KeeperHub's execution wallet
+(`0xbc44e17797048d137b6be6aa2651af89a4248218`, from row 1 above) will still
+leave it with `ERC20: transfer amount exceeds balance` on `supply()`:
+
+| Token | Address (Base Sepolia) | Used for | Faucet |
+| --- | --- | --- | --- |
+| **Aave test USDC** (`USDC_UNDERLYING`, Aave's own Base Sepolia market) | [`0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f`](https://sepolia.basescan.org/address/0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f) | **This is the one that matters here** — hardcoded as the `asset` in the Aave v3 offer's `supplyContract.argsTemplate` (see [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts)), so it's what KeeperHub's `supply()` call on the Aave Pool (`0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27`) actually pulls from `onBehalfOf`. | Aave's Base Sepolia `Faucet` contract at [`0xd9145B5F45Ad4519C7aCCD6e0a4A82e83bb8A6DC`](https://sepolia.basescan.org/address/0xd9145b5f45ad4519c7accd6e0a4a82e83bb8a6dc) — see below. |
+| **Circle USDC** (Circle's official Base Sepolia deployment) | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036cbd53842c5426634e7929541ec2318f3dcf7e) | Not used by this platform's Aave path — listed here only because it's the USDC address most Base Sepolia tooling/tutorials reference, and it's easy to confuse with the one above. | [Circle faucet](https://faucet.circle.com/) — pick "Base Sepolia", paste your address. |
+
+If KeeperHub's wallet ends up holding Circle USDC instead of Aave's test
+USDC, `supply()` will still revert — they're two unrelated ERC-20 contracts,
+not variants of one token, and there's no swap/bridge between them on
+testnet. Use the Aave faucet below to get the right one.
+
+**Minting Aave test USDC to a wallet you don't hold the key for** (e.g.
+KeeperHub's execution wallet): Aave's Base Sepolia USDC is owned by a
+permissionless `Faucet` contract that exposes
+`mint(address token, address to, uint256 amount)` — callable by *any*
+gas-funded wallet, minting to *any* recipient address, no private key for
+the recipient needed:
+
+```
+Faucet:     0xd9145B5F45Ad4519C7aCCD6e0a4A82e83bb8A6DC
+USDC token: 0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f
+
+Faucet.mint(
+  token:  0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f,  // Aave test USDC
+  to:     0xBC44E17797048D137b6bE6Aa2651af89a4248218,  // KeeperHub's execution wallet
+  amount: 2000000                                       // 2 USDC (6 decimals)
+)
+```
+
+Call it from any wallet that already has a little Base Sepolia ETH for gas
+(e.g. `PROCURE_PRIVATE_KEY`'s wallet) via a block explorer's "Write Contract"
+tab, `cast send`, or a one-off viem/ethers script — the `app.aave.com`
+faucet UI works too, but only mints to the wallet you're connected as, which
+doesn't help for a wallet whose key you don't hold.
 
 ## Relationship to `./agent-skills/scripts/cli`
 

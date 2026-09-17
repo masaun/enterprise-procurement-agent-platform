@@ -56,9 +56,11 @@ export async function checkApyAndExecuteSupply(
     amount: string;
     minApyBps: number;
     idempotencyKey: string;
+    /** The address that should receive the protocol's receipt token (e.g. Aave's aToken) — this agent's own wallet, not the provider's. */
+    onBehalfOf: string;
   },
 ): Promise<KeeperHubExecutionResult> {
-  const { provider, asset, amount, minApyBps, idempotencyKey } = params;
+  const { provider, asset, amount, minApyBps, idempotencyKey, onBehalfOf } = params;
 
   if (isKeeperHubDemoMode(config)) {
     return simulateCheckAndExecute({ provider, minApyBps, idempotencyKey });
@@ -103,7 +105,7 @@ export async function checkApyAndExecuteSupply(
       functionArgs: buildFunctionArgs(provider.supplyContract.argsTemplate, {
         asset,
         amount,
-        onBehalfOf: provider.registration.agentRegistry,
+        onBehalfOf,
       }),
       // Pins the exact overload (see ProviderOffer["supplyContract"]["abi"]'s
       // doc comment) — without this, KeeperHub's auto-fetched explorer ABI
