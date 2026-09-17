@@ -58,7 +58,7 @@ verify an inbound webhook's signature before trusting it, tell apart
 Hermes's flat JSON from OpenClaw's TaskFlow `goal` string (which folds
 structured fields into free text — see
 [`agent-skills/references/protocols.md`](../agent-skills/references/protocols.md#webhook-signing-how-you-receive-an-intent)),
-parse a human's plain-English ask ("Move 1M USDC... only if APY > 4%") into
+parse a human's plain-English ask ("Move 2 USDC... only if APY > 1%") into
 the right flags, and read the right reference doc on demand instead of
 having every protocol detail hard-coded. That reasoning is what a real
 Hermes Agent or OpenClaw install brings via its own LLM — this package
@@ -83,7 +83,7 @@ node bin/agent-demo.ts skills
 | --- | --- |
 | `agent-demo skills` | Loads only `agent-skills/SKILL.md`'s `name` + `description` and prints them, plus the list of `references/*.md` available on demand — step 1 of progressive disclosure, with no LLM call. |
 | `agent-demo webhook --platform <hermes\|openclaw\|generic> --payload <file\|-> [--secret <secret>]` | Simulates this agent receiving a signed webhook on the given platform's route (see `fixtures/webhook-*.json` for one example payload per platform) and reasoning over it end to end. The command signs the payload itself first, exactly the way `./app`'s dispatcher would (`app/lib/webhooks/dispatch.ts`), then hands the signed request to the agent loop, which independently re-verifies it with the same secret via its own `verify_webhook_signature` tool — so the full sign/verify round trip is demonstrated without needing a live `./app` instance running the dispatch side. |
-| `agent-demo instruct "<text>"` | Simulates a human enterprise admin telling this agent directly, no webhook involved — e.g. `agent-demo instruct "Move 1,000,000 USDC to an approved lending protocol, but only if APY > 4%."` |
+| `agent-demo instruct "<text>"` | Simulates a human enterprise admin telling this agent directly, no webhook involved — e.g. `agent-demo instruct "Move 2 USDC to an approved lending protocol, but only if APY > 1%."` |
 
 Every run logs each step to stdout: which skill loaded, each LLM turn, every
 tool call and its result, and the LLM's final natural-language report.
@@ -198,8 +198,8 @@ flowchart LR
 
 | # | Panel | Reaches `agent-demo`? | What to enter today |
 | --- | --- | --- | --- |
-| 1 | **KeeperHub policy** | Indirectly — this agent fetches it read-only via `GET /api/agent/entrypoints/policy/invoke` once it acts. | Already seeded from `app/.env.local`: Max USD/task `1000000`, Min APY `4.00`, Allowed assets `USDC`, Allowed protocols `aave-v3, compound-v3, morpho`. Matches `fixtures/webhook-generic.json` — leave as-is. |
-| 2 | **Procurement intent** | Only via panel 3's dispatch — doesn't execute anything itself. | Instruction `Move 1,000,000 USDC from our treasury to an approved lending protocol, but only if APY > 4%.`, Asset `USDC`, Amount `1000000`, Min APY `4.0` (all defaults). |
+| 1 | **KeeperHub policy** | Indirectly — this agent fetches it read-only via `GET /api/agent/entrypoints/policy/invoke` once it acts. | Already seeded from `app/.env.local`: Max USD/task `2`, Min APY `1.00`, Allowed assets `USDC`, Allowed protocols `aave-v3, compound-v3, morpho`. Matches `fixtures/webhook-generic.json` — leave as-is. |
+| 2 | **Procurement intent** | Only via panel 3's dispatch — doesn't execute anything itself. | Instruction `Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.`, Asset `USDC`, Amount `2`, Min APY `1.0` (all defaults). |
 | 3 | **Webhook subscribers** | **No** — see below. | N/A as a live wire; see the two-step flow below instead. |
 | 4 | **Authorized agents** | N/A (this is `./app` gating *incoming* on-chain writes from any agent, not something this package calls) | Needs real on-chain setup before it accepts anything meaningful — see below. |
 

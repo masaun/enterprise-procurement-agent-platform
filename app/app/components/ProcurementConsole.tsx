@@ -5,7 +5,7 @@ import { Timeline } from "@/app/components/Timeline";
 import type { Policy, ProcurementTask, ProviderOffer } from "@/lib/types";
 
 const DEFAULT_INSTRUCTION =
-  "Move 1,000,000 USDC from our treasury to an approved lending protocol, but only if APY > 4%.";
+  "Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.";
 
 type WebhookPlatform = "hermes" | "openclaw" | "generic";
 type Subscriber = { id: string; name: string; platform: WebhookPlatform; url: string; secret: "(set)"; active: boolean; createdAt: string };
@@ -35,9 +35,9 @@ export function ProcurementConsole() {
   const [savingPolicy, setSavingPolicy] = useState(false);
 
   const [instruction, setInstruction] = useState(DEFAULT_INSTRUCTION);
-  const [amount, setAmount] = useState("1000000");
+  const [amount, setAmount] = useState("2");
   const [asset, setAsset] = useState("USDC");
-  const [minApy, setMinApy] = useState("4.0");
+  const [minApy, setMinApy] = useState("1.0");
   const [dispatching, setDispatching] = useState(false);
   const [dispatchSummary, setDispatchSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
