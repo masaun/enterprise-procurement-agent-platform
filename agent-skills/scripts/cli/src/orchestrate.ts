@@ -89,9 +89,13 @@ export async function runProcurementLocally(config: CliConfig, request: Procurem
   });
   push(
     "keeperhub.condition_checked",
-    `KeeperHub re-checked the condition on-chain: observed ${(execution.condition!.observedApyBps / 100).toFixed(2)}% ${
-      execution.condition!.met ? ">=" : "<"
-    } required ${(execution.condition!.targetApyBps / 100).toFixed(2)}%`,
+    execution.mode === "demo"
+      ? `KeeperHub (simulated) re-checked APY on-chain: observed ${(Number(execution.condition!.observedValue) / 100).toFixed(2)}% ${
+          execution.condition!.met ? ">=" : "<"
+        } required ${(Number(execution.condition!.targetValue) / 100).toFixed(2)}%`
+      : `KeeperHub re-read the reserve's on-chain rate right before broadcast as a liveness guard (the ${(requiredApyBps / 100).toFixed(2)}% APY threshold was already verified off-chain during policy evaluation): observed ${
+          execution.condition!.observedValue
+        } ${execution.condition!.met ? ">=" : "<"} baseline ${execution.condition!.targetValue}`,
     execution.condition,
   );
 

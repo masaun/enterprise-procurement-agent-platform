@@ -1,4 +1,4 @@
-import { DirectExecutor, KeeperHubClient, type DirectCheckAndExecuteResult } from "@keeperhub/sdk";
+import { DirectExecutor, KeeperHubClient, isReadResult, type DirectCheckAndExecuteResult } from "@keeperhub/sdk";
 import type { CliConfig } from "./config.ts";
 
 /**
@@ -26,8 +26,9 @@ export type KeeperHubExecutionResult = {
   transactionHash?: string;
   condition?: {
     met: boolean;
-    observedApyBps: number;
-    targetApyBps: number;
+    /** Kept as strings — a real on-chain read (e.g. a ray-scaled index) can exceed Number's safe integer range. */
+    observedValue: string;
+    targetValue: string;
   };
   idempotencyKey?: string;
   raw?: unknown;
@@ -65,15 +66,36 @@ export async function checkApyAndExecuteSupply(
 
   const client = getClient(config);
   const executor = new DirectExecutor(client);
+  const network = toKeeperHubNetwork(provider.network);
 
-  const result: DirectCheckAndExecuteResult = await executor.checkAndExecute({
-    network: provider.network,
+  // Real lending-protocol contracts don't expose "current APY in bps" as a single
+  // on-chain scalar — that's normally computed off-chain from a rate curve, which is
+  // exactly what already happened above the CLI's own policy evaluation (offer.apyBps
+  // vs minApyBps). So the on-chain condition here isn't re-checking the APY threshold;
+  // it's a liveness guard — read the same rate function once now for a baseline, then
+  // require it hasn't gone backwards by the time checkAndExecute re-reads it right
+  // before broadcast, so the guarded write only fires against contract state we've
+  // just observed as live and responsive.
+  const baseline = await executor.callContract({
+    network,
     contractAddress: provider.rateContract.address,
     functionName: provider.rateContract.functionName,
     functionArgs: provider.rateContract.functionArgs,
-    condition: { operator: "gte", value: String(minApyBps) },
+  });
+  if (!isReadResult(baseline) || typeof baseline.result !== "string") {
+    throw new Error(
+      `Expected a scalar read from ${provider.rateContract.functionName}, got: ${JSON.stringify(baseline)}`,
+    );
+  }
+
+  const result: DirectCheckAndExecuteResult = await executor.checkAndExecute({
+    network,
+    contractAddress: provider.rateContract.address,
+    functionName: provider.rateContract.functionName,
+    functionArgs: provider.rateContract.functionArgs,
+    condition: { operator: "gte", value: baseline.result },
     action: {
-      network: provider.network,
+      network,
       contractAddress: provider.supplyContract.address,
       functionName: provider.supplyContract.functionName,
       functionArgs: buildFunctionArgs(provider.supplyContract.argsTemplate, {
@@ -91,12 +113,23 @@ export async function checkApyAndExecuteSupply(
     status: result.status ?? (result.executed ? "success" : "skipped"),
     condition: {
       met: result.condition.met,
-      observedApyBps: Number(result.condition.observedValue),
-      targetApyBps: Number(result.condition.targetValue),
+      observedValue: String(result.condition.observedValue),
+      targetValue: String(result.condition.targetValue),
     },
     idempotencyKey,
     raw: result,
   };
+}
+
+/**
+ * `provider.network` is CAIP-2 (`"eip155:84532"`) per `references/api-reference.md`,
+ * since that's what SIWX chain-ID matching needs. The KeeperHub SDK's `network`
+ * param wants a bare chain id or its own alias instead (its docs example: "base",
+ * "ethereum", "8453") — so translate only at this SDK call boundary.
+ */
+function toKeeperHubNetwork(network: string): string {
+  const eip155Match = network.match(/^eip155:(\d+)$/);
+  return eip155Match ? eip155Match[1] : network;
 }
 
 function buildFunctionArgs(template: string, values: Record<string, string>): string {
@@ -122,8 +155,8 @@ function simulateCheckAndExecute(params: {
     transactionHash: met ? (`0x${cryptoRandomHex(64)}` as const) : undefined,
     condition: {
       met,
-      observedApyBps: provider.apyBps,
-      targetApyBps: minApyBps,
+      observedValue: String(provider.apyBps),
+      targetValue: String(minApyBps),
     },
     idempotencyKey,
     raw: {

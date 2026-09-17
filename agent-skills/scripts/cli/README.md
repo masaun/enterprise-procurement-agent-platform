@@ -41,7 +41,7 @@ export PROCURE_PRIVATE_KEY="0x..."                   # your EOA key — SIWX aut
 export PROCURE_MCP_API_KEY="..."                     # only if the platform's /api/agent/mcp requires it
 export PROCURE_CHAIN_ID="84532"                      # default shown, bare chain id used to build eip155:<id>
 export PROCURE_KEEPERHUB_API_KEY="kh_..."            # your own KeeperHub org key — unset = demo mode
-export PROCURE_KEEPERHUB_BASE_URL="https://app.keeperhub.com"  # default shown
+export PROCURE_KEEPERHUB_BASE_URL="https://app.keeperhub.com/api"  # default shown — include /api if you override this
 export PROCURE_KEEPERHUB_EXECUTION_MODE="direct"     # default shown
 export PROCURE_REGISTRY_ADDRESS="0x..."              # deployed ProcurementRegistry (../../../contracts) — unset = on-chain write skipped
 export PROCURE_RPC_URL="https://sepolia.base.org"    # default shown

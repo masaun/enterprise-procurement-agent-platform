@@ -1,7 +1,10 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
+import { config as loadDotenv } from "dotenv";
 
 const PACKAGE_DIR = dirname(dirname(fileURLToPath(import.meta.url))); // agent-demo/
+
+loadDotenv({ path: join(PACKAGE_DIR, ".env") });
 
 export type Persona = "hermes" | "openclaw" | "generic";
 

@@ -206,7 +206,7 @@ output (no summary line, no pretty-printing) — the same convention
 | `PROCURE_MCP_API_KEY` | Sent as `Authorization: Bearer <key>` to `/api/agent/mcp` if the platform requires it | unset |
 | `PROCURE_CHAIN_ID` | Bare chain id used to build the CAIP-2 id offered during SIWX | `84532` |
 | `PROCURE_KEEPERHUB_API_KEY` | This agent's own KeeperHub organization key | unset -> KeeperHub demo mode (simulated `checkAndExecute`) |
-| `PROCURE_KEEPERHUB_BASE_URL` | KeeperHub API base URL | `https://app.keeperhub.com` |
+| `PROCURE_KEEPERHUB_BASE_URL` | KeeperHub API base URL — the SDK's own default already includes `/api`; if you set this explicitly, include `/api` too (e.g. `https://app.keeperhub.com/api`) or requests 404 | `https://app.keeperhub.com/api` |
 | `PROCURE_KEEPERHUB_EXECUTION_MODE` | `direct` uses `DirectExecutor` | `direct` |
 | `PROCURE_REGISTRY_ADDRESS` | Deployed `ProcurementRegistry` address (see `../../contracts/README.md`) | unset -> the on-chain receipt write is skipped, with a warning |
 | `PROCURE_RPC_URL` | Base Sepolia RPC endpoint for the registry write | `https://sepolia.base.org` |
