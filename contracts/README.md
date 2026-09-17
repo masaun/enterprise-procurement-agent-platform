@@ -11,6 +11,12 @@ A standalone [Foundry](https://book.getfoundry.sh/) project — separate from `.
 
 `recordProcurement` rejects a duplicate `taskId` and emits `ProcurementRecorded` with every field `./app`'s dashboard needs to render history straight from logs (`app/lib/chain/registry.ts` reads these via a viem public client).
 
+## Deployed addresses
+
+| Contract | Address (Base Sepolia) |
+| --- | --- |
+| [`ProcurementRegistry.sol`](./src/ProcurementRegistry.sol) | [`0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623`](https://sepolia.basescan.org/address/0xdf33fdf3360fcf1923abb8c7e3ce3c51160c7623#code) |
+
 ## Build & test
 
 ```bash

@@ -237,3 +237,13 @@ See [`scripts/cli/README.md`](scripts/cli/README.md) and `agent-skills/README.md
 for install-as-a-global-command instructions, the full command/config
 reference, and how to register a webhook route on your own platform
 (Hermes/OpenClaw/generic).
+
+## A runnable example agent that reads this file
+
+[`../agent-demo`](../agent-demo/README.md) is an LLM-driven (via
+[OpenRouter](https://openrouter.ai/docs/quickstart)) example of the kind of
+agent this skill is written for: it loads only the frontmatter above at
+startup, reads everything below once a webhook or natural-language task
+matches, reads `references/*.md` on demand, and shells out to the CLI above
+to act — playing the same actor/role a real Hermes Agent or OpenClaw
+install would.

@@ -14,7 +14,9 @@ subscribed external agents, gates whatever those agents report back with a
 live on-chain ERC-8004 check, and renders the resulting on-chain activity
 history. The actual discovery -> policy evaluation -> KeeperHub execution
 pipeline now runs on the external agent's own machine — see
-[`../agent-skills/README.md`](../agent-skills/README.md).
+[`../agent-skills/README.md`](../agent-skills/README.md), and
+[`../agent-demo/README.md`](../agent-demo/README.md) for a runnable,
+LLM-driven example of that external agent.
 
 ## Architecture
 

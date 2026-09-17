@@ -13,6 +13,13 @@ human admin sets policy and describes intents there; this skill is what
 turns a dispatched webhook into an actual, executed, on-chain-recorded
 procurement.
 
+Looking for a runnable example of "an external agent that reads this
+skill"? [`../agent-demo`](../agent-demo/README.md) is exactly that: an
+LLM-driven agent (via OpenRouter) that plays the same actor/role as a real
+Hermes Agent or OpenClaw install — it loads only this file's `name` +
+`description` at startup, reads the full body below once a task matches,
+pulls in `references/*.md` on demand, and drives the CLI below to act.
+
 ```mermaid
 flowchart TB
     subgraph Skill["agent-skills/ (this Agent Skill)"]

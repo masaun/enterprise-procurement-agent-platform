@@ -1,0 +1,6 @@
+{
+  "action": "create_flow",
+  "goal": "Move 1,000,000 USDC from our treasury to an approved lending protocol, but only if APY > 4%. (taskId=task-demo-openclaw-001, asset=USDC, amount=1000000, minApyBps=400)",
+  "status": "queued",
+  "notifyPolicy": "done_only"
+}
