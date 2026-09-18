@@ -171,18 +171,30 @@ Once you've picked a provider, `agent-skills/scripts/cli/src/keeperhub.ts`
 calls `@keeperhub/sdk`'s `DirectExecutor.checkAndExecute()` — **using your
 own KeeperHub org key (`PROCURE_KEEPERHUB_API_KEY`), not the platform's**:
 
-1. **Read**: call the provider's rate contract (view function) for the
-   current APY, in basis points.
-2. **Evaluate**: compare against a condition (`{ operator: "gte", value: "400" }`
-   for "APY > 4%").
+The `minApyBps` gate itself is already enforced off-chain, before this ever
+runs — `evaluatePolicy()` compares each discovered offer's quoted APY
+against the policy and only the winning offer reaches `checkAndExecute()`.
+Real lending-protocol contracts don't expose "current APY in bps" as a
+single on-chain scalar (that's normally derived off-chain from a rate
+curve), so the on-chain condition below is a **liveness/freshness guard**,
+not a second APY check:
+
+1. **Read**: call the provider's rate contract (view function) once up front
+   to get a baseline value (for the real Aave v3 gateway: `getReserveNormalizedIncome`,
+   a monotonically increasing ray).
+2. **Evaluate**: `checkAndExecute` re-reads the same function immediately
+   before broadcast and compares it against that baseline (`{ operator: "gte",
+   value: "<baseline>" }`) — it only proceeds if the reserve is still live and
+   responsive, not stale or reverting.
 3. **Write**: only if the condition holds, broadcast the guarded action (the
    USDC `supply()`/`deposit()` call into the protocol) — inside KeeperHub's
    managed execution path (policy, wallet, nonce/gas management).
 
 This is a single atomic KeeperHub call, not an agent-side read followed by a
 separate unguarded write — the condition is re-checked on-chain at broadcast
-time, independent of whatever APY the A2A `quote` skill reported a moment
-earlier.
+time. (KeeperHub demo mode — `PROCURE_KEEPERHUB_API_KEY` unset — simulates
+this differently: it compares the mock offer's own `apyBps` against
+`minApyBps` directly, since there's no real contract to read.)
 
 ## ProcurementRegistry — the on-chain receipt (Base Sepolia)
 

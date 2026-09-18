@@ -51,6 +51,8 @@ export type ProviderOffer = {
     address: string;
     functionName: string;
     functionArgs?: string;
+    /** JSON ABI fragment array, only needed when `functionName` is ambiguous on the auto-fetched explorer ABI (overloads). */
+    abi?: string;
   };
   /**
    * KeeperHub DirectExecutor.checkAndExecute() write-side: the guarded
@@ -63,6 +65,29 @@ export type ProviderOffer = {
     address: string;
     functionName: string;
     argsTemplate: string;
+    /**
+     * JSON ABI fragment array pinning the exact overload to call. KeeperHub
+     * auto-fetches a contract's ABI from the explorer when this is omitted,
+     * and refuses to guess when `functionName` matches more than one
+     * overload (e.g. Aave v3 Pool's `supply(address,uint256,address,uint16)`
+     * vs `supply(bytes32)`) — see agent-demo/README.md's troubleshooting
+     * section for the real error this produced.
+     */
+    abi?: string;
+    /**
+     * ERC20 allowance this supply call needs first — Aave's (and most
+     * lending protocols') `supply()`/`deposit()` does a `transferFrom` under
+     * the hood, which reverts with "ERC20: transfer amount exceeds
+     * allowance" unless the caller's wallet has already approved this exact
+     * spender. When set, the CLI (`agent-skills/scripts/cli/src/keeperhub.ts`)
+     * calls `approve(spenderAddress, amount)` on `tokenAddress` immediately
+     * before the guarded supply call. Omit for protocols whose supply call
+     * doesn't need a prior approval (e.g. it takes native tokens).
+     */
+    approve?: {
+      tokenAddress: string;
+      spenderAddress: string;
+    };
   };
 };
 

@@ -41,15 +41,47 @@ export const MOCK_PROVIDERS: MockProviderSpec[] = [
     trustModels: ["feedback"],
     agentRegistry: "eip155:84532:0x2e234dae75c793f67a35089c9d99245e1c58470b",
     agentId: "1001",
+    // Real, verified Aave v3 Pool proxy on Base Sepolia (aave-dao/aave-address-book's
+    // AaveV3BaseSepolia.sol) — confirmed live via eth_call against sepolia.base.org.
+    // The other three providers below are still illustrative/mock addresses.
     rateContract: {
-      address: "0x6ae43d3271ff6888e7fc43fd7321a503ff738951",
-      functionName: "getReserveAPY",
-      functionArgs: '["0xUSDC"]',
+      address: "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
+      functionName: "getReserveNormalizedIncome",
+      // USDC on this Aave market, per its own getReservesList() (verified: symbol "USDC", 6 decimals).
+      functionArgs: '["0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f"]',
     },
     supplyContract: {
-      address: "0x6ae43d3271ff6888e7fc43fd7321a503ff738951",
+      address: "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
       functionName: "supply",
-      argsTemplate: '["{{asset}}", "{{amount}}", "{{onBehalfOf}}", 0]',
+      // supply(address asset, uint256 amount, address onBehalfOf, uint16 referralCode) — asset is
+      // this market's real USDC address (not a template: Pool.supply needs a token address, not a ticker).
+      argsTemplate: '["0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f", "{{amount}}", "{{onBehalfOf}}", 0]',
+      // Aave v3's Pool proxy also exposes an unrelated supply(bytes32) overload
+      // (an internal/admin function), so KeeperHub's auto-fetched explorer ABI
+      // can't tell which "supply" we mean and refuses to guess. Pinning the
+      // exact 4-arg overload here resolves it deterministically.
+      abi: JSON.stringify([
+        {
+          inputs: [
+            { internalType: "address", name: "asset", type: "address" },
+            { internalType: "uint256", name: "amount", type: "uint256" },
+            { internalType: "address", name: "onBehalfOf", type: "address" },
+            { internalType: "uint16", name: "referralCode", type: "uint16" },
+          ],
+          name: "supply",
+          outputs: [],
+          stateMutability: "nonpayable",
+          type: "function",
+        },
+      ]),
+      // Aave's supply() does a transferFrom(msg.sender, ...) under the hood —
+      // the org wallet must approve the Pool proxy to move this exact USDC
+      // before the guarded supply call, or it reverts with "ERC20: transfer
+      // amount exceeds allowance". See keeperhub.ts's checkApyAndExecuteSupply.
+      approve: {
+        tokenAddress: "0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f",
+        spenderAddress: "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
+      },
     },
   },
   {

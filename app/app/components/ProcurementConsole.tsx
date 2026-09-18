@@ -5,7 +5,7 @@ import { Timeline } from "@/app/components/Timeline";
 import type { Policy, ProcurementTask, ProviderOffer } from "@/lib/types";
 
 const DEFAULT_INSTRUCTION =
-  "Move 1,000,000 USDC from our treasury to an approved lending protocol, but only if APY > 4%.";
+  "Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.";
 
 type WebhookPlatform = "hermes" | "openclaw" | "generic";
 type Subscriber = { id: string; name: string; platform: WebhookPlatform; url: string; secret: "(set)"; active: boolean; createdAt: string };
@@ -16,6 +16,7 @@ type AuthorizedAgent = {
   addedAt: string;
   verification: { verified: boolean; onChainWallet?: string; reputation?: { count: number; value: number; valueDecimals: number }; reason?: string };
 };
+type IdentityRegistrationResult = { agentId?: string; agentAddress: string; transactionHash: string; transferTransactionHash?: string };
 type OnChainReceipt = {
   taskId: string;
   enterprise: string;
@@ -35,9 +36,9 @@ export function ProcurementConsole() {
   const [savingPolicy, setSavingPolicy] = useState(false);
 
   const [instruction, setInstruction] = useState(DEFAULT_INSTRUCTION);
-  const [amount, setAmount] = useState("1000000");
+  const [amount, setAmount] = useState("2");
   const [asset, setAsset] = useState("USDC");
-  const [minApy, setMinApy] = useState("4.0");
+  const [minApy, setMinApy] = useState("1.0");
   const [dispatching, setDispatching] = useState(false);
   const [dispatchSummary, setDispatchSummary] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,11 @@ export function ProcurementConsole() {
   const [newAgent, setNewAgent] = useState({ address: "", agentId: "" });
   const [addingAgent, setAddingAgent] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+
+  const [identityDraft, setIdentityDraft] = useState({ agentURI: "", agentWalletAddress: "" });
+  const [registeringIdentity, setRegisteringIdentity] = useState(false);
+  const [identityResult, setIdentityResult] = useState<IdentityRegistrationResult | null>(null);
+  const [identityError, setIdentityError] = useState<string | null>(null);
 
   const [receipts, setReceipts] = useState<OnChainReceipt[] | null>(null);
   const [dispatchedPending, setDispatchedPending] = useState<ProcurementTask[]>([]);
@@ -133,6 +139,30 @@ export function ProcurementConsole() {
   async function removeSubscriber(id: string) {
     await fetch(`/api/webhooks/subscribers/${id}`, { method: "DELETE" }).catch(() => undefined);
     void refreshSubscribers();
+  }
+
+  async function registerIdentity(e: React.FormEvent) {
+    e.preventDefault();
+    setRegisteringIdentity(true);
+    setIdentityError(null);
+    setIdentityResult(null);
+    try {
+      const res = await fetch("/api/agents/identity", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentURI: identityDraft.agentURI,
+          agentWalletAddress: identityDraft.agentWalletAddress || undefined,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || "Registration failed");
+      setIdentityResult(body as IdentityRegistrationResult);
+    } catch (e) {
+      setIdentityError((e as Error).message);
+    } finally {
+      setRegisteringIdentity(false);
+    }
   }
 
   async function refreshAuthorizedAgents() {
@@ -371,6 +401,67 @@ export function ProcurementConsole() {
                 ))}
               </div>
             )}
+          </div>
+
+          <div className="card">
+            <h2>Authorize Agent (by Registering in the ERC-8004)</h2>
+            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -4, marginBottom: 12 }}>
+              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry, signed by{" "}
+              <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code>. Enter the agent wallet address to register it for — the
+              identity is minted and then transferred to that address on-chain, so this app never needs the agent
+              wallet&apos;s own private key. Leave it blank to register the <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code>{" "}
+              wallet itself instead. Do this once per agent wallet — the resulting agentId + address are what
+              &quot;Authorized agents&quot; below needs.
+            </p>
+            <form onSubmit={registerIdentity}>
+              <div className="field">
+                <label>Agent Wallet Address</label>
+                <input
+                  value={identityDraft.agentWalletAddress}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentWalletAddress: e.target.value })}
+                  placeholder="0x… (defaults to the ENTERPRISE_ADMIN_PRIVATE_KEY wallet if left blank)"
+                />
+              </div>
+              <div className="field">
+                <label>Agent URI (optional)</label>
+                <input
+                  value={identityDraft.agentURI}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentURI: e.target.value })}
+                  placeholder="https://.../.well-known/agent-registration.json"
+                />
+              </div>
+              <button className="btn secondary" type="submit" disabled={registeringIdentity}>
+                {registeringIdentity ? <span className="spinner" /> : null}
+                {registeringIdentity ? "Registering on-chain…" : "Register in ERC-8004"}
+              </button>
+              {identityError ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{identityError}</p> : null}
+            </form>
+            {identityResult ? (
+              <div className="provider-row" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+                <div className="provider-main">
+                  <div className="provider-name">
+                    Registered <span className="badge ok">agentId {identityResult.agentId ?? "unknown"}</span>
+                  </div>
+                  <div className="provider-meta mono">{identityResult.agentAddress}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <a
+                    className="pill link"
+                    href={`https://sepolia.basescan.org/tx/${identityResult.transferTransactionHash ?? identityResult.transactionHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    tx
+                  </a>
+                  <button
+                    className="btn secondary"
+                    onClick={() => setNewAgent({ address: identityResult.agentAddress, agentId: identityResult.agentId ?? "" })}
+                  >
+                    Use below ↓
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
 
           <div className="card">

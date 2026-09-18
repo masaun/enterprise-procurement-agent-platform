@@ -1,4 +1,4 @@
-import { DirectExecutor, KeeperHubClient, type DirectCheckAndExecuteResult } from "@keeperhub/sdk";
+import { DirectExecutor, KeeperHubClient, isReadResult, type DirectCheckAndExecuteResult } from "@keeperhub/sdk";
 import type { CliConfig } from "./config.ts";
 
 /**
@@ -13,10 +13,31 @@ import type { CliConfig } from "./config.ts";
 export type ProviderOfferForExecution = {
   network: string;
   apyBps: number;
-  rateContract: { address: string; functionName: string; functionArgs?: string };
-  supplyContract: { address: string; functionName: string; argsTemplate: string };
+  rateContract: { address: string; functionName: string; functionArgs?: string; abi?: string };
+  supplyContract: {
+    address: string;
+    functionName: string;
+    argsTemplate: string;
+    abi?: string;
+    /** ERC20 allowance to approve on `tokenAddress` for `spenderAddress` before the guarded supply call. See `ProviderOffer["supplyContract"]["approve"]`'s doc comment in app/lib/types.ts. */
+    approve?: { tokenAddress: string; spenderAddress: string };
+  };
   registration: { agentRegistry: string };
 };
+
+/** Minimal ERC20 fragment — enough for KeeperHub's auto-fetched-ABI disambiguation to pin the standard `approve(address,uint256)` overload. */
+const ERC20_APPROVE_ABI = JSON.stringify([
+  {
+    inputs: [
+      { internalType: "address", name: "spender", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    name: "approve",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+]);
 
 export type KeeperHubExecutionResult = {
   mode: "direct" | "demo";
@@ -26,8 +47,9 @@ export type KeeperHubExecutionResult = {
   transactionHash?: string;
   condition?: {
     met: boolean;
-    observedApyBps: number;
-    targetApyBps: number;
+    /** Kept as strings — a real on-chain read (e.g. a ray-scaled index) can exceed Number's safe integer range. */
+    observedValue: string;
+    targetValue: string;
   };
   idempotencyKey?: string;
   raw?: unknown;
@@ -55,9 +77,11 @@ export async function checkApyAndExecuteSupply(
     amount: string;
     minApyBps: number;
     idempotencyKey: string;
+    /** The address that should receive the protocol's receipt token (e.g. Aave's aToken) — this agent's own wallet, not the provider's. */
+    onBehalfOf: string;
   },
 ): Promise<KeeperHubExecutionResult> {
-  const { provider, asset, amount, minApyBps, idempotencyKey } = params;
+  const { provider, asset, amount, minApyBps, idempotencyKey, onBehalfOf } = params;
 
   if (isKeeperHubDemoMode(config)) {
     return simulateCheckAndExecute({ provider, minApyBps, idempotencyKey });
@@ -65,38 +89,106 @@ export async function checkApyAndExecuteSupply(
 
   const client = getClient(config);
   const executor = new DirectExecutor(client);
+  const network = toKeeperHubNetwork(provider.network);
 
-  const result: DirectCheckAndExecuteResult = await executor.checkAndExecute({
-    network: provider.network,
+  // Real lending-protocol contracts don't expose "current APY in bps" as a single
+  // on-chain scalar — that's normally computed off-chain from a rate curve, which is
+  // exactly what already happened above the CLI's own policy evaluation (offer.apyBps
+  // vs minApyBps). So the on-chain condition here isn't re-checking the APY threshold;
+  // it's a liveness guard — read the same rate function once now for a baseline, then
+  // require it hasn't gone backwards by the time checkAndExecute re-reads it right
+  // before broadcast, so the guarded write only fires against contract state we've
+  // just observed as live and responsive.
+  const baseline = await executor.callContract({
+    network,
     contractAddress: provider.rateContract.address,
     functionName: provider.rateContract.functionName,
     functionArgs: provider.rateContract.functionArgs,
-    condition: { operator: "gte", value: String(minApyBps) },
+    abi: provider.rateContract.abi,
+  });
+  if (!isReadResult(baseline) || typeof baseline.result !== "string") {
+    throw new Error(
+      `Expected a scalar read from ${provider.rateContract.functionName}, got: ${JSON.stringify(baseline)}`,
+    );
+  }
+
+  // Aave's (and most lending protocols') supply()/deposit() does a
+  // transferFrom(msg.sender, ...) under the hood, so the org wallet must
+  // grant the Pool proxy an ERC20 allowance first or the guarded write
+  // below reverts with "ERC20: transfer amount exceeds allowance" — the
+  // Direct Execution API has no dedicated approve endpoint (confirmed
+  // against KeeperHub's docs), so this is just another callContract write.
+  // Re-approving on every run is redundant once the allowance is already
+  // sufficient, but cheap and idempotent, and avoids having to read the org
+  // wallet's own on-chain address (KeeperHub manages that wallet internally
+  // and doesn't expose it) just to check its current allowance first.
+  if (provider.supplyContract.approve) {
+    await executor.callContract({
+      network,
+      contractAddress: provider.supplyContract.approve.tokenAddress,
+      functionName: "approve",
+      functionArgs: JSON.stringify([provider.supplyContract.approve.spenderAddress, amount]),
+      abi: ERC20_APPROVE_ABI,
+    });
+  }
+
+  const result: DirectCheckAndExecuteResult = await executor.checkAndExecute({
+    network,
+    contractAddress: provider.rateContract.address,
+    functionName: provider.rateContract.functionName,
+    functionArgs: provider.rateContract.functionArgs,
+    abi: provider.rateContract.abi,
+    condition: { operator: "gte", value: baseline.result },
     action: {
-      network: provider.network,
+      network,
       contractAddress: provider.supplyContract.address,
       functionName: provider.supplyContract.functionName,
       functionArgs: buildFunctionArgs(provider.supplyContract.argsTemplate, {
         asset,
         amount,
-        onBehalfOf: provider.registration.agentRegistry,
+        onBehalfOf,
       }),
+      // Pins the exact overload (see ProviderOffer["supplyContract"]["abi"]'s
+      // doc comment) — without this, KeeperHub's auto-fetched explorer ABI
+      // can match more than one function of the same name and refuses to
+      // guess which one to call.
+      abi: provider.supplyContract.abi,
     },
   });
 
+  // KeeperHub's real `checkAndExecute` omits `condition` on some failed/errored
+  // executions (e.g. the org wallet lacking funds/allowance for the action
+  // leg) even though the SDK's type declares it as always present. Treat a
+  // missing condition as "not executed" with the API's own status/error
+  // surfaced, instead of throwing — an uncaught TypeError here previously
+  // propagated all the way up through orchestrate.ts uncaught, crashing the
+  // whole `procure act`/`submit` call with no useful message.
   return {
     mode: "direct",
     executed: result.executed,
     executionId: result.executionId,
-    status: result.status ?? (result.executed ? "success" : "skipped"),
-    condition: {
-      met: result.condition.met,
-      observedApyBps: Number(result.condition.observedValue),
-      targetApyBps: Number(result.condition.targetValue),
-    },
+    status: result.status ?? (result.executed ? "success" : result.condition ? "skipped" : "error"),
+    condition: result.condition
+      ? {
+          met: result.condition.met,
+          observedValue: String(result.condition.observedValue),
+          targetValue: String(result.condition.targetValue),
+        }
+      : undefined,
     idempotencyKey,
     raw: result,
   };
+}
+
+/**
+ * `provider.network` is CAIP-2 (`"eip155:84532"`) per `references/api-reference.md`,
+ * since that's what SIWX chain-ID matching needs. The KeeperHub SDK's `network`
+ * param wants a bare chain id or its own alias instead (its docs example: "base",
+ * "ethereum", "8453") — so translate only at this SDK call boundary.
+ */
+function toKeeperHubNetwork(network: string): string {
+  const eip155Match = network.match(/^eip155:(\d+)$/);
+  return eip155Match ? eip155Match[1] : network;
 }
 
 function buildFunctionArgs(template: string, values: Record<string, string>): string {
@@ -122,8 +214,8 @@ function simulateCheckAndExecute(params: {
     transactionHash: met ? (`0x${cryptoRandomHex(64)}` as const) : undefined,
     condition: {
       met,
-      observedApyBps: provider.apyBps,
-      targetApyBps: minApyBps,
+      observedValue: String(provider.apyBps),
+      targetValue: String(minApyBps),
     },
     idempotencyKey,
     raw: {

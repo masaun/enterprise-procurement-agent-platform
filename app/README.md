@@ -33,6 +33,7 @@ flowchart LR
         Intents["/procurement-intents (POST)"]
         History["/procurement-history (GET)"]
         Webhooks["/webhooks/subscribers (CRUD)"]
+        IdentityReg["/agents/identity (POST)"]
         Agents["/agents/authorized (CRUD)"]
     end
 
@@ -50,6 +51,7 @@ flowchart LR
 
     subgraph Gate["lib/identity + lib/chain — the ERC-8004 gate"]
         GateTs["gate.ts\nlive on-chain identity/reputation verify"]
+        Register["identity/register.ts\nmints a new ERC-8004 identity"]
         Registry["chain/registry.ts\nviem read + owner-signed writes"]
     end
 
@@ -70,6 +72,7 @@ flowchart LR
     UI --> Providers --> Orchestrate
     UI --> History --> Registry
     UI --> Webhooks --> Subs
+    UI --> IdentityReg --> Register
     UI --> Agents --> GateTs
     Agents --> Registry
     Entry --> Agent
@@ -79,6 +82,7 @@ flowchart LR
     MCP --> Orchestrate
     Orchestrate -->|"A2A: fetchAgentCardWithEntrypoints + invokeAgent"| Mock
     Registry -->|"read/write ProcurementRegistry"| Chain[("Base Sepolia")]
+    Register -->|"mint ERC-8004 identity"| Chain
 ```
 
 ## Request lifecycle: one procurement intent, end to end
@@ -129,6 +133,7 @@ sequenceDiagram
 | Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported `ProcurementTask` by id (`lib/store.ts`). |
 | Set policy (admin) | `PATCH /api/policy` | admin-only, not agent-facing | The dashboard's editable policy form. |
 | Describe intent (admin) | `POST /api/procurement-intents` | admin-only, not agent-facing | Records a pending intent and dispatches it as a webhook. **No execution happens here or anywhere in this app.** |
+| Register an ERC-8004 identity (admin) | `POST /api/agents/identity` | admin-only, not agent-facing | Mints a new ERC-8004 identity (`lib/identity/register.ts`), signed by `ENTERPRISE_ADMIN_PRIVATE_KEY`. Accepts an optional `agentWalletAddress`; when given, the minted identity is transferred to that address on-chain so it ends up owned by the agent wallet the admin names, not the signer. A prerequisite for the row below — do this once per agent wallet first. |
 | Authorize an agent (admin) | `POST /api/agents/authorized` | admin-only, not agent-facing | Runs the live ERC-8004 verify (`lib/identity/gate.ts`) and, on success, calls `ProcurementRegistry.addAuthorizedAgent()`. |
 
 Only `report` is gated by anything beyond a signature — and it's gated
@@ -144,7 +149,7 @@ proves the platform actually trusts that address to report at all.
 | `app/api/agent/[...lucid]/route.ts` | Binds the real `@lucid-agents/http` route plan (`runtime.http.routes`) straight into Next.js — see `lib/lucid/http-bind.ts`. |
 | `app/api/agent/mcp/route.ts` | MCP endpoint: `McpServer` + `WebStandardStreamableHTTPServerTransport`, stateless, read-only tools only. |
 | `app/api/mock-providers/[providerId]/[...lucid]/route.ts` | Same binding pattern, for each mock provider's own tiny `@lucid-agents/core` runtime — unchanged; these are market data, not actor logic. |
-| `app/api/policy`, `app/api/procurement-intents`, `app/api/procurement-history`, `app/api/webhooks/subscribers[/:id]`, `app/api/agents/authorized[/:address]` | The platform's own admin API — not part of the agent-facing contract (see `agent-skills/references/api-reference.md`). |
+| `app/api/policy`, `app/api/procurement-intents`, `app/api/procurement-history`, `app/api/webhooks/subscribers[/:id]`, `app/api/agents/identity`, `app/api/agents/authorized[/:address]` | The platform's own admin API — not part of the agent-facing contract (see `agent-skills/references/api-reference.md`). |
 | `app/api/health`, `app/api/providers` | UI-only convenience routes. |
 | `lib/types.ts` | Shared zod schemas + TS types: `ProcurementRequest`, `ProviderOffer`, `ProcurementTask`, `ProcurementReportSchema`, `Policy`. |
 | `lib/lucid/agent.ts` | The remaining Lucid entrypoints: `authenticate`, `discover`, `policy`, `report` (SIWX + on-chain gate), `procurement_status`. |
@@ -153,6 +158,7 @@ proves the platform actually trusts that address to report at all.
 | `lib/lucid/http-bind.ts` | The Next.js <-> `@lucid-agents/http` adapter — architecture-neutral, unchanged. |
 | `lib/keeperhub/policy.ts` | The enterprise's policy — now mutable (`updatePolicy`), seeded from env, edited via `PATCH /api/policy`. `evaluatePolicy` is still exported for the `report` handler to audit against, mirrored in the CLI for the agent's own pre-execution check. |
 | `lib/identity/gate.ts` | **New.** Live ERC-8004 verification of an inbound caller — composes `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient`, since no ready-made "verify this caller" function exists in the SDK. |
+| `lib/identity/register.ts` | **New.** Mints a new ERC-8004 identity via `IdentityRegistryClient.register()`, signed by `ENTERPRISE_ADMIN_PRIVATE_KEY` — backs the "Authorize Agent (by Registering in the ERC-8004)" panel. When an `agentWalletAddress` is supplied, follows up with `IdentityRegistryClient.transfer()` to hand the freshly minted identity to that address, since `register()` itself always mints to whoever signs. |
 | `lib/identity/authorizedAgentsStore.ts` | **New.** In-app display cache of which `agentId` an authorized address verified against, plus its reputation snapshot — the allowlist's source of truth is on-chain (`ProcurementRegistry.authorizedAgents`). |
 | `lib/chain/registry.ts`, `lib/chain/procurementAbi.ts` | **New.** viem clients reading `ProcurementRecorded` logs and (owner-signed) writing the on-chain allowlist. |
 | `lib/webhooks/subscribers.ts`, `lib/webhooks/dispatch.ts` | **New.** Subscriber registry + per-platform (Hermes/OpenClaw/generic) payload building and HMAC/Bearer signing. |
@@ -199,7 +205,8 @@ ERC-8004 gate, on-chain reads, and contract administration.
 | `CHAIN_ID` | same as above | `84532` (Base Sepolia) | |
 | `IDENTITY_AGENT_ID` | `@lucid-agents/identity` | `1` | Static self-registration id when no live registry is configured. |
 | `REGISTER_IDENTITY` | `@lucid-agents/identity` | `false` | Only relevant in live mode; requires a signing wallet. |
-| `IDENTITY_REGISTRY_ADDRESS`, `REPUTATION_REGISTRY_ADDRESS` | `lib/identity/gate.ts` | unset -> resolved via `@lucid-agents/identity`'s `getRegistryAddress()` | Override only if targeting a non-default deployment. |
+| `IDENTITY_REGISTRY_ADDRESS`, `REPUTATION_REGISTRY_ADDRESS` | `lib/identity/gate.ts`, `lib/identity/register.ts` | unset -> resolved via `@lucid-agents/identity`'s `getRegistryAddress()` | Override only if targeting a non-default deployment. |
+| `ENTERPRISE_ADMIN_PRIVATE_KEY` | `lib/identity/register.ts` (`POST /api/agents/identity`) | unset -> registration disabled (`503`) | Signs the ERC-8004 mint — `register()` mints to whoever signs. The admin panel's **Agent Wallet Address** field then transfers the minted identity to the agent wallet the admin actually wants registered, so this key no longer needs to be the agent's own (e.g. `PROCURE_PRIVATE_KEY`); it only needs gas on Base Sepolia. Never `CONTRACT_OWNER_PRIVATE_KEY`. Renamed from `AGENT_IDENTITY_PRIVATE_KEY`, which implied it had to be a specific agent's key. |
 | `AGENT_MCP_API_KEY` | `app/api/agent/mcp` | unset | If set, MCP requests must send `Authorization: Bearer <key>`. |
 | `PROCUREMENT_REGISTRY_ADDRESS` | `lib/chain/registry.ts` | unset | The deployed `ProcurementRegistry` address (see `../contracts/README.md`). Unset -> on-chain history/reporting/gating all disabled with a clear error. |
 | `CONTRACT_OWNER_PRIVATE_KEY` | `lib/chain/registry.ts` (admin writes) | unset | The **platform's** own signer — administers the on-chain `authorizedAgents` allowlist only. Never used for enterprise treasury funds or KeeperHub execution; that's the external agent's own `PROCURE_PRIVATE_KEY`. |
@@ -226,6 +233,7 @@ for the `PROCURE_*` side of this table:
 | Server-side (this table) | Caller-side (`agent-skills` CLI / any external agent) |
 | --- | --- |
 | `CONTRACT_OWNER_PRIVATE_KEY` — the **platform's** own contract-administration signer. Never touches enterprise funds. | `PROCURE_PRIVATE_KEY` — the **agent's own** wallet: signs SIWX challenges *and* writes the on-chain receipt (`ProcurementRegistry.recordProcurement`). |
+| `ENTERPRISE_ADMIN_PRIVATE_KEY` — the dashboard's "Authorize Agent" panel's own minting key, used to sign the one-time ERC-8004 registration. Since `register()` always mints to whoever signs, and the panel's **Agent Wallet Address** field then transfers the identity on-chain to whichever address the admin names, this key no longer has to belong to the agent — it just needs gas. | The admin supplies the target **Agent Wallet Address** in the panel (often the same address as `PROCURE_PRIVATE_KEY`'s, but no private key for it is ever given to this app). |
 | `AGENT_MCP_API_KEY` — the shared secret `app/api/agent/mcp` checks *incoming* requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller and sent as `Authorization: Bearer <key>`. |
 | `RPC_URL` / `PROCUREMENT_REGISTRY_ADDRESS` — read-only chain queries and the gate's registry lookups. | `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_KEEPERHUB_BASE_URL` / `PROCURE_KEEPERHUB_EXECUTION_MODE` — the agent's own KeeperHub org credentials, used to actually execute. **This app never holds these anymore.** |
 
