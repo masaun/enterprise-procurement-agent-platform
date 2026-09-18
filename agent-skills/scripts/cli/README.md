@@ -1,4 +1,4 @@
-# `procure` — CLI for the Enterprise Procurement Agent's actor
+# CLI for the Enterprise Procurement Agent
 
 A small dependency-light Node CLI that is now the **actor**, not just an
 HTTP client: `procure submit`/`act` read discovery and policy from

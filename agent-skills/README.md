@@ -1,4 +1,4 @@
-# `./agent-skills` — teaching an external agent to be the procurement actor
+# Enterprise Procurement Agent Skills
 
 This is an [Agent Skills](https://agentskills.io/home)-format package: a
 portable, version-controlled folder that tells any skills-compatible agent
@@ -137,6 +137,13 @@ simplest integration is to shell out to `procure act` (or call
 `agent-skills/scripts/cli/src/orchestrate.ts` if you're embedding this in
 your own agent runtime rather than shelling out).
 
+
+## `CLI` for Enterprise Procurement Agent
+
+See [`scripts/cli/README.md`](scripts/cli/README.md) for the full command
+reference.
+
+
 ## Server secrets vs. caller secrets
 
 `./app`'s own `.env` (see [`../app/README.md`](../app/README.md#environment-variables))
@@ -158,7 +165,8 @@ only here, never on the platform.
 
 ## The `procure` CLI
 
-Modeled on [moltbook-cli](https://github.com/Moltbook-Official/moltbook-cli)
+See [`scripts/cli/README.md`](scripts/cli/README.md) for the full command
+reference. Modeled on [moltbook-cli](https://github.com/Moltbook-Official/moltbook-cli)
 (the reference CLI for [Moltbook](https://github.com/Moltbook-Official/moltbook),
 "the social network for AI agents"): a small dependency-light Node CLI, one
 subcommand per capability, a `--json` flag on every command for
