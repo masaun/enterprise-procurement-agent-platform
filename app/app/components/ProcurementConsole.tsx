@@ -16,7 +16,7 @@ type AuthorizedAgent = {
   addedAt: string;
   verification: { verified: boolean; onChainWallet?: string; reputation?: { count: number; value: number; valueDecimals: number }; reason?: string };
 };
-type IdentityRegistrationResult = { agentId?: string; agentAddress: string; transactionHash: string };
+type IdentityRegistrationResult = { agentId?: string; agentAddress: string; transactionHash: string; transferTransactionHash?: string };
 type OnChainReceipt = {
   taskId: string;
   enterprise: string;
@@ -52,7 +52,7 @@ export function ProcurementConsole() {
   const [addingAgent, setAddingAgent] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
 
-  const [identityDraft, setIdentityDraft] = useState({ agentURI: "" });
+  const [identityDraft, setIdentityDraft] = useState({ agentURI: "", agentWalletAddress: "" });
   const [registeringIdentity, setRegisteringIdentity] = useState(false);
   const [identityResult, setIdentityResult] = useState<IdentityRegistrationResult | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
@@ -150,7 +150,10 @@ export function ProcurementConsole() {
       const res = await fetch("/api/agents/identity", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ agentURI: identityDraft.agentURI }),
+        body: JSON.stringify({
+          agentURI: identityDraft.agentURI,
+          agentWalletAddress: identityDraft.agentWalletAddress || undefined,
+        }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body?.message || "Registration failed");
@@ -403,16 +406,27 @@ export function ProcurementConsole() {
           <div className="card">
             <h2>Authorize Agent (by Registering in the ERC-8004)</h2>
             <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -4, marginBottom: 12 }}>
-              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry for the wallet configured via{" "}
-              <code>AGENT_IDENTITY_PRIVATE_KEY</code>. Do this once per agent wallet — the resulting agentId + address
-              are what &quot;Authorized agents&quot; below needs.
+              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry, signed by{" "}
+              <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code>. Enter the agent wallet address to register it for — the
+              identity is minted and then transferred to that address on-chain, so this app never needs the agent
+              wallet&apos;s own private key. Leave it blank to register the <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code>{" "}
+              wallet itself instead. Do this once per agent wallet — the resulting agentId + address are what
+              &quot;Authorized agents&quot; below needs.
             </p>
             <form onSubmit={registerIdentity}>
+              <div className="field">
+                <label>Agent Wallet Address</label>
+                <input
+                  value={identityDraft.agentWalletAddress}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentWalletAddress: e.target.value })}
+                  placeholder="0x… (defaults to the ENTERPRISE_ADMIN_PRIVATE_KEY wallet if left blank)"
+                />
+              </div>
               <div className="field">
                 <label>Agent URI (optional)</label>
                 <input
                   value={identityDraft.agentURI}
-                  onChange={(e) => setIdentityDraft({ agentURI: e.target.value })}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentURI: e.target.value })}
                   placeholder="https://.../.well-known/agent-registration.json"
                 />
               </div>
@@ -433,7 +447,7 @@ export function ProcurementConsole() {
                 <div style={{ display: "flex", gap: 8 }}>
                   <a
                     className="pill link"
-                    href={`https://sepolia.basescan.org/tx/${identityResult.transactionHash}`}
+                    href={`https://sepolia.basescan.org/tx/${identityResult.transferTransactionHash ?? identityResult.transactionHash}`}
                     target="_blank"
                     rel="noreferrer"
                   >

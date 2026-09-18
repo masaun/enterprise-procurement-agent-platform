@@ -309,18 +309,21 @@ flowchart TB
 | `PROCUREMENT_REGISTRY_ADDRESS` in `app/.env.local` | **Missing** — panel returns `503` | Set to the deployed contract, `0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623` (see root [`README.md`](../README.md#deployed-contracts)). |
 | `CONTRACT_OWNER_PRIVATE_KEY` in `app/.env.local` | **Missing** | Set to the key that deployed/owns `ProcurementRegistry.sol` — administers the allowlist only, never touches treasury funds. |
 | `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Set** (a fixed EOA, not a throwaway-per-run key) | Needs Base Sepolia ETH for gas — see the troubleshooting section below; it has none yet. |
-| An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Set `AGENT_IDENTITY_PRIVATE_KEY` in `app/.env.local` to the **same key** as `PROCURE_PRIVATE_KEY` above, then use the dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`POST /api/agents/identity`) to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
+| An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Set `ENTERPRISE_ADMIN_PRIVATE_KEY` in `app/.env.local` (any funded Base Sepolia key — it no longer has to match `PROCURE_PRIVATE_KEY`), then use the dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`POST /api/agents/identity`), entering `PROCURE_PRIVATE_KEY`'s address in the panel's **Agent Wallet Address** field, to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
 
-`AGENT_IDENTITY_PRIVATE_KEY` and `PROCURE_PRIVATE_KEY` are two env vars in
-two different apps' env files, but they must hold the **same key** — one
-wallet, playing both roles:
+`ENTERPRISE_ADMIN_PRIVATE_KEY` (renamed from `AGENT_IDENTITY_PRIVATE_KEY`,
+which wrongly implied it had to be a specific agent's own key) and
+`PROCURE_PRIVATE_KEY` are two env vars in two different apps' env files, and
+no longer need to hold the same key — the panel mints with the former and
+transfers the resulting identity on-chain to whatever address is entered as
+**Agent Wallet Address** (typically `PROCURE_PRIVATE_KEY`'s address):
 
-| | `AGENT_IDENTITY_PRIVATE_KEY` (`app/.env.local`) | `PROCURE_PRIVATE_KEY` (`agent-demo/.env`) |
+| | `ENTERPRISE_ADMIN_PRIVATE_KEY` (`app/.env.local`) | `PROCURE_PRIVATE_KEY` (`agent-demo/.env`) |
 | --- | --- | --- |
 | Held by | `./app` (the enterprise's management platform) | `./agent-demo` (the external agent acting on the enterprise's behalf) |
-| Used for | Signing the one-time `POST /api/agents/identity` call — mints the ERC-8004 identity NFT via `IdentityRegistryClient.register()` | Signing SIWX auth challenges, executing via KeeperHub, and writing `ProcurementRegistry.recordProcurement()` |
-| Why it must sign | `register()` mints the new identity to whichever wallet signs the tx — there's no "register on behalf of" option | It's simply the agent's own operating wallet, used for every on-chain/auth action it takes |
-| Must equal | The agent's own wallet — i.e. it must match `PROCURE_PRIVATE_KEY` | The wallet whose identity gets registered and later authorized |
+| Used for | Signing the one-time `POST /api/agents/identity` call — mints the ERC-8004 identity NFT via `IdentityRegistryClient.register()`, then transfers it via `IdentityRegistryClient.transfer()` | Signing SIWX auth challenges, executing via KeeperHub, and writing `ProcurementRegistry.recordProcurement()` |
+| Why it signs | `register()` mints the new identity to whichever wallet signs the tx — there's no "register on behalf of" option — so this key mints, then hands the identity off | It's simply the agent's own operating wallet, used for every on-chain/auth action it takes |
+| Must equal | Nothing — any funded Base Sepolia key works; it only pays gas | The wallet whose identity gets registered and later authorized — enter its address in the panel's **Agent Wallet Address** field |
 | In production | Would normally *not* be held here at all — the agent operator would register their own identity and just hand the platform the resulting `agentId`/address (see [`app/README.md`](../app/README.md)'s server/caller-secrets table) | Always lives with the agent, never with the platform |
 
 Until all four rows are done, the "Authorized agents" panel — and therefore
@@ -455,23 +458,51 @@ way to attempting the real `supply()` transaction, failing only on:
 — KeeperHub's execution wallet has no USDC to supply. A pure funding gap,
 one step further than before.
 
+### Fix #5: the org wallet had a USDC balance but no allowance for Aave's Pool
+
+Once KeeperHub's execution wallet was funded with Base Sepolia USDC, the
+error above (`exceeds balance`) advanced one step, to:
+
+```
+"Contract call failed: Error(ERC20: transfer amount exceeds allowance)"
+```
+
+Aave v3's `supply()` calls `transferFrom(msg.sender, ...)` under the hood —
+it moves the caller's USDC into the Pool itself, which needs the caller to
+have `approve()`d the Pool as a spender first. Nothing in the pipeline ever
+called `approve()`; `checkApyAndExecuteSupply` went straight from reading
+the baseline rate to `checkAndExecute()`'s guarded `supply()` write. This
+isn't a KeeperHub-specific problem — a raw wallet driving Aave directly
+would hit the exact same revert — and confirmed against KeeperHub's own
+docs (`https://docs.keeperhub.com`, Direct Execution API reference): there's
+no dedicated approve endpoint; an approval is just another `contract-call`
+write calling the token's own `approve(spender, amount)`.
+
+| File | Change |
+| --- | --- |
+| [`app/lib/types.ts`](../app/lib/types.ts) | Added an optional `approve?: { tokenAddress, spenderAddress }` field to `ProviderOffer["supplyContract"]`. |
+| [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts) | `aave-v3-gateway.supplyContract.approve` now points at the Base Sepolia USDC contract and the Aave v3 Pool proxy as spender. |
+| [`agent-skills/scripts/cli/src/keeperhub.ts`](../agent-skills/scripts/cli/src/keeperhub.ts) | `checkApyAndExecuteSupply` now calls `executor.callContract()` with `approve(spenderAddress, amount)` on `tokenAddress` immediately before `checkAndExecute()`'s guarded `supply()` write, whenever `provider.supplyContract.approve` is set. |
+
+This re-approves the exact amount being supplied on every run rather than
+reading the org wallet's current allowance first — KeeperHub manages that
+wallet internally and doesn't expose its address, so there's no cheap way
+to read its allowance directly. An extra `approve` call when the allowance
+is already sufficient is redundant but harmless (idempotent, and cheap
+relative to the supply transaction itself).
+
 ### What's still open
 
-Two funding gaps and one authorization gap remain — none of them require
+One authorization gap remains — it requires dashboard configuration, not
 further code changes:
 
 | # | Issue | Evidence |
 | --- | --- | --- |
-| 1 | KeeperHub's own execution wallet (`0xbc44e17797048d137b6be6aa2651af89a4248218` — a different address from `PROCURE_PRIVATE_KEY`'s) has **0 Base Sepolia ETH** (for gas) **and 0 Base Sepolia USDC** (to actually supply). | Real errors above: `Need: 0.000000231` ETH, then `ERC20: transfer amount exceeds balance` once gas was no longer the blocker. |
-| 2 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`, `0xd3BFFc0CD419344649deC61f08912a4Af283E1a6`) also has **0 Base Sepolia ETH**. | Real revert: `gas required exceeds allowance (0)` from `recordProcurement()`. |
-| 3 | That same wallet also isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist. | Real revert once funded: the contract's own `NotAuthorizedAgent`. `app/.env.local` now has `PROCUREMENT_REGISTRY_ADDRESS` set, but `CONTRACT_OWNER_PRIVATE_KEY` (needed to actually call `addAuthorizedAgent`) is still empty, so the dashboard's "Authorized agents" panel can't run yet either. |
+| 1 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`) isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist, and/or lacks Base Sepolia ETH for `recordProcurement()`'s gas. | Real revert once the KeeperHub leg succeeds: the contract's own `NotAuthorizedAgent`, or `gas required exceeds allowance (0)` if unfunded. Use the "Authorize Agent (by Registering in the ERC-8004)" panel, then "Authorized agents", per the section above. |
 
-Once both wallets hold a small amount of Base Sepolia ETH (from any public
-faucet — no real funds, this is a testnet), KeeperHub's wallet also holds a
-little Base Sepolia USDC, and `test_opera_1` is authorized
-via the dashboard, `procure act`/`submit` and `agent-demo` should complete
-the full pipeline: KeeperHub execution, the on-chain receipt write, and the
-report back to `./app`.
+Once that wallet is funded and authorized, `procure act`/`submit` and
+`agent-demo` should complete the full pipeline: KeeperHub execution, the
+on-chain receipt write, and the report back to `./app`.
 
 ### Base Sepolia token addresses & faucets
 

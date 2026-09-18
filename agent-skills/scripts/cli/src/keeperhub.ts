@@ -14,9 +14,30 @@ export type ProviderOfferForExecution = {
   network: string;
   apyBps: number;
   rateContract: { address: string; functionName: string; functionArgs?: string; abi?: string };
-  supplyContract: { address: string; functionName: string; argsTemplate: string; abi?: string };
+  supplyContract: {
+    address: string;
+    functionName: string;
+    argsTemplate: string;
+    abi?: string;
+    /** ERC20 allowance to approve on `tokenAddress` for `spenderAddress` before the guarded supply call. See `ProviderOffer["supplyContract"]["approve"]`'s doc comment in app/lib/types.ts. */
+    approve?: { tokenAddress: string; spenderAddress: string };
+  };
   registration: { agentRegistry: string };
 };
+
+/** Minimal ERC20 fragment — enough for KeeperHub's auto-fetched-ABI disambiguation to pin the standard `approve(address,uint256)` overload. */
+const ERC20_APPROVE_ABI = JSON.stringify([
+  {
+    inputs: [
+      { internalType: "address", name: "spender", type: "address" },
+      { internalType: "uint256", name: "amount", type: "uint256" },
+    ],
+    name: "approve",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+]);
 
 export type KeeperHubExecutionResult = {
   mode: "direct" | "demo";
@@ -89,6 +110,26 @@ export async function checkApyAndExecuteSupply(
     throw new Error(
       `Expected a scalar read from ${provider.rateContract.functionName}, got: ${JSON.stringify(baseline)}`,
     );
+  }
+
+  // Aave's (and most lending protocols') supply()/deposit() does a
+  // transferFrom(msg.sender, ...) under the hood, so the org wallet must
+  // grant the Pool proxy an ERC20 allowance first or the guarded write
+  // below reverts with "ERC20: transfer amount exceeds allowance" — the
+  // Direct Execution API has no dedicated approve endpoint (confirmed
+  // against KeeperHub's docs), so this is just another callContract write.
+  // Re-approving on every run is redundant once the allowance is already
+  // sufficient, but cheap and idempotent, and avoids having to read the org
+  // wallet's own on-chain address (KeeperHub manages that wallet internally
+  // and doesn't expose it) just to check its current allowance first.
+  if (provider.supplyContract.approve) {
+    await executor.callContract({
+      network,
+      contractAddress: provider.supplyContract.approve.tokenAddress,
+      functionName: "approve",
+      functionArgs: JSON.stringify([provider.supplyContract.approve.spenderAddress, amount]),
+      abi: ERC20_APPROVE_ABI,
+    });
   }
 
   const result: DirectCheckAndExecuteResult = await executor.checkAndExecute({

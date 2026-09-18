@@ -74,6 +74,14 @@ export const MOCK_PROVIDERS: MockProviderSpec[] = [
           type: "function",
         },
       ]),
+      // Aave's supply() does a transferFrom(msg.sender, ...) under the hood —
+      // the org wallet must approve the Pool proxy to move this exact USDC
+      // before the guarded supply call, or it reverts with "ERC20: transfer
+      // amount exceeds allowance". See keeperhub.ts's checkApyAndExecuteSupply.
+      approve: {
+        tokenAddress: "0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f",
+        spenderAddress: "0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27",
+      },
     },
   },
   {

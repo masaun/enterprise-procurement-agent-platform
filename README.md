@@ -108,7 +108,7 @@ management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 | SIWX challenge/sign/verify (EIP-191 signature, nonce, expiry) | **Real.** `@lucid-agents/payments`. |
 | A2A discovery + invocation (Agent Cards, `quote` skill calls) | **Real.** `@lucid-agents/a2a`, against three small real agent runtimes `./app` hosts. |
 | ERC-8004 inbound gate | **Real, live on-chain verification.** `app/lib/identity/gate.ts` calls `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient` against Base Sepolia — not a static allowlist. |
-| ERC-8004 identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`app/lib/identity/register.ts`) mints a real identity on the official ERC-8004 Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. |
+| ERC-8004 identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`app/lib/identity/register.ts`) mints a real identity on the official ERC-8004 Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. The admin enters the target **Agent Wallet Address**; the panel mints with its own signer and transfers the identity to that address on-chain, so no private key for the agent wallet ever passes through this app. |
 | On-chain activity history | **Real.** `ProcurementRegistry.sol` (`./contracts`), deployed to Base Sepolia; the dashboard reads `ProcurementRecorded` events directly via viem. |
 | AP2 commerce-role mandate | **Real.** `@lucid-agents/ap2` — `shopper` (the external agent) / `merchant` (each provider). |
 | KeeperHub execution | **Real SDK, `@keeperhub/sdk`**, now run by the external agent's own CLI with its own org key — falls back to a same-shaped simulated result when unset. |
@@ -213,7 +213,7 @@ for the full tables.
 | `PAYMENTS_RECEIVABLE_ADDRESS`, `PAYMENTS_NETWORK`, `PAYMENTS_FACILITATOR_URL` | `@lucid-agents/payments` | zero address / `eip155:84532` / `https://x402.org/facilitator` |
 | `AGENT_DOMAIN`, `RPC_URL`, `CHAIN_ID`, `IDENTITY_AGENT_ID` | `@lucid-agents/identity` + `lib/identity/gate.ts` + `lib/chain/registry.ts` | unset -> static self-declared identity; `RPC_URL` defaults to Base Sepolia public RPC |
 | `IDENTITY_REGISTRY_ADDRESS`, `REPUTATION_REGISTRY_ADDRESS` | `lib/identity/gate.ts`, `lib/identity/register.ts` | unset -> resolved via `@lucid-agents/identity`'s `getRegistryAddress()` |
-| `AGENT_IDENTITY_PRIVATE_KEY` | `lib/identity/register.ts` (the "Authorize Agent" panel) | unset -> registration disabled; must be the agent's own key (mirrors `PROCURE_PRIVATE_KEY`), not `CONTRACT_OWNER_PRIVATE_KEY` |
+| `ENTERPRISE_ADMIN_PRIVATE_KEY` | `lib/identity/register.ts` (the "Authorize Agent" panel) | unset -> registration disabled; signs the mint only — the panel's **Agent Wallet Address** field then transfers the identity to whichever wallet the admin names, so this key no longer has to be the agent's own (renamed from `AGENT_IDENTITY_PRIVATE_KEY` to reflect that); not `CONTRACT_OWNER_PRIVATE_KEY` |
 | `AGENT_MCP_API_KEY` | `./app/api/agent/mcp` | unset -> open (local dev) |
 | `PROCUREMENT_REGISTRY_ADDRESS` | `lib/chain/registry.ts` | unset -> on-chain history/gating disabled |
 | `CONTRACT_OWNER_PRIVATE_KEY` | `lib/chain/registry.ts` (admin writes only) | unset -> authorizing agents fails |

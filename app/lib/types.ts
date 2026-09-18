@@ -74,6 +74,20 @@ export type ProviderOffer = {
      * section for the real error this produced.
      */
     abi?: string;
+    /**
+     * ERC20 allowance this supply call needs first — Aave's (and most
+     * lending protocols') `supply()`/`deposit()` does a `transferFrom` under
+     * the hood, which reverts with "ERC20: transfer amount exceeds
+     * allowance" unless the caller's wallet has already approved this exact
+     * spender. When set, the CLI (`agent-skills/scripts/cli/src/keeperhub.ts`)
+     * calls `approve(spenderAddress, amount)` on `tokenAddress` immediately
+     * before the guarded supply call. Omit for protocols whose supply call
+     * doesn't need a prior approval (e.g. it takes native tokens).
+     */
+    approve?: {
+      tokenAddress: string;
+      spenderAddress: string;
+    };
   };
 };
 
