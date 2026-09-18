@@ -152,12 +152,14 @@ admin does, through the browser.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/api/health` | UI health check + whether `PROCUREMENT_REGISTRY_ADDRESS` is configured. |
+| GET | `/api/health` | UI health check + whether an active `ProcurementRegistry` is set (see `/api/procurement-registry/active` below). |
 | GET | `/api/providers` | Same discovery as `discover`, plain GET for convenience. |
 | GET / PATCH | `/api/policy` | Read/edit the enterprise's policy (the same values `discover`/`policy` entrypoints expose read-only). |
 | GET / POST | `/api/procurement-intents` | List pending intents / describe a new one — POST triggers the webhook dispatch. **No execution happens on this route.** |
 | GET | `/api/procurement-history` | The dashboard's merged view: on-chain `ProcurementRecorded` receipts + off-chain report detail, keyed by `taskId`. |
 | GET / POST | `/api/webhooks/subscribers` | List / register a webhook subscriber (`{name, platform, url, secret}`). |
 | DELETE | `/api/webhooks/subscribers/:id` | Remove a subscriber. |
-| GET / POST | `/api/agents/authorized` | List authorized agents / run the live ERC-8004 verify + on-chain `addAuthorizedAgent` for a new one. |
-| DELETE | `/api/agents/authorized/:address` | Revoke an agent's on-chain authorization. |
+| GET | `/api/agents/authorized` | List authorized agents (display cache only — see below). |
+| POST | `/api/agents/verify` | Run the live ERC-8004 verify (`agentId` resolves to `address`), **without** writing on-chain — the dashboard's connected wallet does that write itself. |
+| POST | `/api/agents/authorized/record` | Record the display effect of an authorize/revoke the connected wallet already performed on-chain. There's no server-signed write path: `addAuthorizedAgent()`/`revokeAuthorizedAgent()` can only be signed by the registry's owner (the wallet that created it via `ProcurementRegistryFactory`), connected in the browser. |
+| GET / POST | `/api/procurement-registry/active` | Read/set which `ProcurementRegistry` is currently "active" for on-chain history reads and this app's own `report` allowlist gate — kept in sync by the dashboard whenever a connected wallet resolves, creates, or picks a registry. |

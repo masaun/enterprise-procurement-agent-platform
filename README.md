@@ -99,7 +99,9 @@ management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 
 | Contract | Address (Base Sepolia) |
 | --- | --- |
-| [`ProcurementRegistry.sol`](contracts/src/ProcurementRegistry.sol) | [`0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623`](https://sepolia.basescan.org/address/0xdf33fdf3360fcf1923abb8c7e3ce3c51160c7623#code) |
+| [`ProcurementRegistryFactory.sol`](contracts/src/ProcurementRegistryFactory.sol) | [`0x37B32265AdD721156dA8F6192a619FBCaD4522e3`](https://sepolia.basescan.org/address/0x37b32265add721156da8f6192a619fbcad4522e3#code) |
+
+Each enterprise admin creates and owns their own `ProcurementRegistry.sol` instance by calling the factory's `createNewProcurementRegistry()` (see [`contracts/README.md`](contracts/README.md)) — there's no single canonical registry address anymore.
 
 ## What's real vs. simulated
 
@@ -108,7 +110,7 @@ management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 | SIWX challenge/sign/verify (EIP-191 signature, nonce, expiry) | **Real.** `@lucid-agents/payments`. |
 | A2A discovery + invocation (Agent Cards, `quote` skill calls) | **Real.** `@lucid-agents/a2a`, against three small real agent runtimes `./app` hosts. |
 | ERC-8004 inbound gate | **Real, live on-chain verification.** `app/lib/identity/gate.ts` calls `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient` against Base Sepolia — not a static allowlist. |
-| ERC-8004 identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`app/lib/identity/register.ts`) mints a real identity on the official ERC-8004 Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. The admin enters the target **Agent Wallet Address**; the panel mints with its own signer and transfers the identity to that address on-chain, so no private key for the agent wallet ever passes through this app. |
+| ERC-8004 identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`app/lib/identity/register.ts`) mints a real identity on the official ERC-8004 Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. The admin enters the target **Agent Wallet Address**; the mint is then transferred to that address on-chain, so no private key for the agent wallet ever passes through this app. If the admin uses "Connect Wallet" (top of the dashboard) to pick **MetaMask** or **Rabby Wallet** — detected via EIP-6963, see `app/lib/wallet/WalletProvider.tsx` — that wallet signs and pays gas for this directly (`app/lib/identity/registerBrowser.ts`); otherwise it falls back to the platform's `ENTERPRISE_ADMIN_PRIVATE_KEY` signing server-side. |
 | On-chain activity history | **Real.** `ProcurementRegistry.sol` (`./contracts`), deployed to Base Sepolia; the dashboard reads `ProcurementRecorded` events directly via viem. |
 | AP2 commerce-role mandate | **Real.** `@lucid-agents/ap2` — `shopper` (the external agent) / `merchant` (each provider). |
 | KeeperHub execution | **Real SDK, `@keeperhub/sdk`**, now run by the external agent's own CLI with its own org key — falls back to a same-shaped simulated result when unset. |
@@ -150,7 +152,11 @@ cp .env.example .env   # set OPENROUTER_API_KEY, see https://openrouter.ai/docs/
 node bin/agent-demo.ts webhook --platform generic --payload fixtures/webhook-generic.json
 ```
 
-See [`agent-demo/README.md`](agent-demo/README.md).
+Or run `agent-demo serve` to give it a real HTTP listener and register
+`http://localhost:4021/webhook/generic` as a subscriber in the dashboard's
+"Webhook subscribers" panel — then clicking "Dispatch to subscribed agents"
+wakes the agent up live, no manual payload file needed. See
+[`agent-demo/README.md`](agent-demo/README.md#live-wire-registering-agent-demo-as-a-webhook-subscriber).
 
 ## Interaction model
 
@@ -196,9 +202,9 @@ override anything the external agent holds, and vice versa:
 
 | Platform-side (`app/.env`) | Actor-side (`agent-skills` CLI / external agent's own env) |
 | --- | --- |
-| `CONTRACT_OWNER_PRIVATE_KEY` — administers the on-chain `authorizedAgents` allowlist only after a live ERC-8004 check passes. Never touches enterprise funds. | `PROCURE_PRIVATE_KEY` — the external agent's own wallet: signs SIWX challenges *and* writes the on-chain receipt. |
+| *(none — `authorizedAgents` has no platform-held key; it's administered only by whichever connected wallet owns that registry via `ProcurementRegistryFactory`, see [`contracts/README.md`](contracts/README.md))* | `PROCURE_PRIVATE_KEY` — the external agent's own wallet: signs SIWX challenges *and* writes the on-chain receipt. |
 | `AGENT_MCP_API_KEY` — shared secret `app/api/agent/mcp` checks incoming requests against. | `PROCURE_MCP_API_KEY` — the same value, held by the caller. |
-| `RPC_URL` / `PROCUREMENT_REGISTRY_ADDRESS` — used only for read-only chain queries and the gate's registry lookups. | `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_KEEPERHUB_BASE_URL` / `PROCURE_KEEPERHUB_EXECUTION_MODE` — the agent's own KeeperHub org credentials. Never held by `./app`. |
+| `RPC_URL` — read-only chain queries, against whichever registry the dashboard most recently marked "active" (`app/lib/chain/activeRegistryStore.ts`, in-memory — not an env var). | `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_KEEPERHUB_BASE_URL` / `PROCURE_KEEPERHUB_EXECUTION_MODE` — the agent's own KeeperHub org credentials. Never held by `./app`. |
 | *(nothing — the platform no longer holds a treasury or KeeperHub key at all)* | `PROCURE_REGISTRY_ADDRESS` / `PROCURE_RPC_URL` — same contract, used to broadcast the write. |
 
 See [`app/README.md#environment-variables`](app/README.md#environment-variables)
@@ -213,15 +219,16 @@ for the full tables.
 | `PAYMENTS_RECEIVABLE_ADDRESS`, `PAYMENTS_NETWORK`, `PAYMENTS_FACILITATOR_URL` | `@lucid-agents/payments` | zero address / `eip155:84532` / `https://x402.org/facilitator` |
 | `AGENT_DOMAIN`, `RPC_URL`, `CHAIN_ID`, `IDENTITY_AGENT_ID` | `@lucid-agents/identity` + `lib/identity/gate.ts` + `lib/chain/registry.ts` | unset -> static self-declared identity; `RPC_URL` defaults to Base Sepolia public RPC |
 | `IDENTITY_REGISTRY_ADDRESS`, `REPUTATION_REGISTRY_ADDRESS` | `lib/identity/gate.ts`, `lib/identity/register.ts` | unset -> resolved via `@lucid-agents/identity`'s `getRegistryAddress()` |
-| `ENTERPRISE_ADMIN_PRIVATE_KEY` | `lib/identity/register.ts` (the "Authorize Agent" panel) | unset -> registration disabled; signs the mint only — the panel's **Agent Wallet Address** field then transfers the identity to whichever wallet the admin names, so this key no longer has to be the agent's own (renamed from `AGENT_IDENTITY_PRIVATE_KEY` to reflect that); not `CONTRACT_OWNER_PRIVATE_KEY` |
+| `ENTERPRISE_ADMIN_PRIVATE_KEY` | `lib/identity/register.ts` (the "Authorize Agent" panel) | unset -> registration disabled *unless* a wallet is connected via "Connect Wallet"; signs the mint only — the panel's **Agent Wallet Address** field then transfers the identity to whichever wallet the admin names, so this key no longer has to be the agent's own (renamed from `AGENT_IDENTITY_PRIVATE_KEY` to reflect that). Unrelated to `ProcurementRegistry` administration, which has no platform key at all. |
+| `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS` | `lib/identity/registerBrowser.ts` (browser-signed registration) | unset -> Base Sepolia + `@lucid-agents/identity`'s default registry address | Client-side mirrors of `CHAIN_ID`/`IDENTITY_REGISTRY_ADDRESS`, only needed to target a non-default deployment; inlined into the browser bundle at build time, so never put a secret in a `NEXT_PUBLIC_*` var. |
 | `AGENT_MCP_API_KEY` | `./app/api/agent/mcp` | unset -> open (local dev) |
-| `PROCUREMENT_REGISTRY_ADDRESS` | `lib/chain/registry.ts` | unset -> on-chain history/gating disabled |
-| `CONTRACT_OWNER_PRIVATE_KEY` | `lib/chain/registry.ts` (admin writes only) | unset -> authorizing agents fails |
+| `NEXT_PUBLIC_PROCUREMENT_REGISTRY_FACTORY_ADDRESS` | `lib/chain/factoryBrowser.ts` / `registryBrowser.ts` (the "Authorized agents" panel) | unset -> registry creation/administration disabled | No `PROCUREMENT_REGISTRY_ADDRESS`/`CONTRACT_OWNER_PRIVATE_KEY` — a registry's address and owner are always read from `ProcurementRegistryFactory.getRegistriesByCreator()` and signed by the connected wallet; see [`app/README.md`](app/README.md#environment-variables). |
 | `POLICY_MAX_USD_PER_TASK`, `POLICY_MIN_APY_BPS`, `POLICY_ALLOWED_ASSETS`, `POLICY_ALLOWED_PROTOCOLS` | seed defaults for the now-editable policy store | `1000000` / `400` / `USDC` / `aave-v3,compound-v3,morpho` |
 | `DEPLOYER_PRIVATE_KEY`, `BASE_SEPOLIA_RPC_URL`, `BASESCAN_API_KEY` | `./contracts` deploy script | — |
 | `PROCURE_BASE_URL`, `PROCURE_PRIVATE_KEY`, `PROCURE_MCP_API_KEY`, `PROCURE_KEEPERHUB_API_KEY`, `PROCURE_KEEPERHUB_BASE_URL`, `PROCURE_KEEPERHUB_EXECUTION_MODE`, `PROCURE_REGISTRY_ADDRESS`, `PROCURE_RPC_URL` | `procure` CLI (the actor) | `http://localhost:3000` / ephemeral signer / none / demo mode / ... |
 | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL`, `OPENROUTER_BASE_URL` | `agent-demo`'s LLM client (the actor's decision layer) | none (required) / `openai/gpt-4o-mini` / `https://openrouter.ai/api/v1` |
 | `AGENT_DEMO_PERSONA`, `AGENT_DEMO_NAME` | `agent-demo` — which real agent runtime (`hermes`/`openclaw`/`generic`) this run role-plays as | `generic` / `Demo External Agent` |
+| `DEMO_WEBHOOK_SECRET`, `AGENT_DEMO_PORT` | `agent-demo webhook`/`serve` — shared secret + listen port for the real HTTP webhook listener (`agent-demo serve`), must match what's typed into the dashboard's "Webhook subscribers" form | `demo-secret` / `4021` |
 
 ## Further reading
 

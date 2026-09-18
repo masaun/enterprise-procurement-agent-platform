@@ -1,8 +1,9 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import type { AgentDemoConfig, Persona } from "./config.ts";
+import type { AgentDemoConfig } from "./config.ts";
 import { listSkillReferences, readSkillReference } from "./skills.ts";
 import type { ToolDefinition } from "./openrouter.ts";
+import type { AgentTrigger } from "./agent.ts";
 
 /**
  * The tool surface this demo agent's LLM (via OpenRouter) can call. It
@@ -18,6 +19,19 @@ import type { ToolDefinition } from "./openrouter.ts";
 export interface ToolContext {
   config: AgentDemoConfig;
   log: (line: string) => void;
+  /**
+   * The actual trigger this agent run was started from. `verify_webhook_signature`
+   * reads its raw body/headers/secret from here — not from LLM-supplied tool-call
+   * arguments — because those values reach the LLM only as text spliced into a
+   * prompt (see `agent.ts`'s `describeTrigger`), and an LLM asked to retype a raw
+   * JSON blob into a new JSON tool call is not guaranteed to reproduce it
+   * byte-for-byte (reformatted whitespace, reordered keys, normalized quoting,
+   * etc.). Since HMAC-SHA256 changes completely on any single byte of drift, that
+   * retyping step made every verification fail even for a legitimately signed
+   * webhook. Keeping the tool's inputs and the verification's actual inputs
+   * decoupled makes verification correct regardless of what the LLM types.
+   */
+  trigger?: AgentTrigger;
 }
 
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
@@ -49,19 +63,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     function: {
       name: "verify_webhook_signature",
       description:
-        "Verify an inbound webhook actually came from ./app before acting on it, per agent-skills/references/protocols.md's 'Webhook signing' table. Supports the hermes (X-Webhook-Signature-V2 + X-Webhook-Timestamp), openclaw (Authorization: Bearer), and generic (X-Procurement-Signature-256) schemes.",
-      parameters: {
-        type: "object",
-        properties: {
-          platform: { type: "string", enum: ["hermes", "openclaw", "generic"] },
-          rawBody: { type: "string", description: "The exact raw request body bytes, as a string" },
-          secret: { type: "string", description: "The shared webhook secret this agent registered with the admin" },
-          signatureHeader: { type: "string", description: "The signature/Authorization header value received" },
-          timestampHeader: { type: "string", description: "hermes only: the X-Webhook-Timestamp header value" },
-        },
-        required: ["platform", "rawBody", "secret", "signatureHeader"],
-        additionalProperties: false,
-      },
+        "Verify the inbound webhook this run was triggered by actually came from ./app, per agent-skills/references/protocols.md's 'Webhook signing' table (hermes: X-Webhook-Signature-V2 + X-Webhook-Timestamp; openclaw: Authorization: Bearer; generic: X-Procurement-Signature-256). Takes no arguments — the raw body, headers, and shared secret are read directly from the actual trigger, not from your own recollection of them, since retyping a raw JSON body byte-for-byte isn't something you can guarantee and any drift would break the signature check.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
   {
@@ -159,12 +162,19 @@ export function executeTool(name: string, argsJson: string, ctx: ToolContext): s
     }
 
     case "verify_webhook_signature": {
-      ctx.log(`[tool] verify_webhook_signature(platform=${args.platform})`);
+      if (!ctx.trigger || ctx.trigger.kind !== "webhook") {
+        return JSON.stringify({ verified: false, error: "This run has no inbound webhook to verify (its trigger was a direct instruction)." });
+      }
+      const { platform, rawBody, headers, secret } = ctx.trigger;
+      ctx.log(`[tool] verify_webhook_signature(platform=${platform})`);
       let verified: boolean;
-      const platform = args.platform as Persona;
-      if (platform === "hermes") verified = verifyHermes(args.rawBody, args.secret, args.signatureHeader, args.timestampHeader);
-      else if (platform === "openclaw") verified = verifyOpenClaw(args.secret, args.signatureHeader);
-      else verified = verifyGeneric(args.rawBody, args.secret, args.signatureHeader);
+      if (platform === "hermes") {
+        verified = verifyHermes(rawBody, secret, headers["x-webhook-signature-v2"] ?? "", headers["x-webhook-timestamp"]);
+      } else if (platform === "openclaw") {
+        verified = verifyOpenClaw(secret, headers["authorization"] ?? "");
+      } else {
+        verified = verifyGeneric(rawBody, secret, headers["x-procurement-signature-256"] ?? "");
+      }
       return JSON.stringify({ verified });
     }
 

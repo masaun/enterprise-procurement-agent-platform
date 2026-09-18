@@ -67,13 +67,18 @@ an MCP-native client — execution never happens over MCP.
 
 Before your `report` call (or your on-chain `recordProcurement` write) will
 succeed, the enterprise admin must add your wallet to the platform's
-allowlist via the dashboard's "Authorized agents" panel
-(`POST /api/agents/authorized { address, agentId }`). This runs a **live**
-ERC-8004 check: your `agentId` must actually resolve, on the ERC-8004
-Identity Registry, to the wallet address you're using — not just a
-self-declared claim. Give the admin your wallet address and your
-registered `agentId` first. Until you're authorized, `recordProcurement`
-reverts on-chain and `report` is rejected server-side.
+allowlist via the dashboard's "Authorized agents" panel, with their wallet
+connected there (it must own the target `ProcurementRegistry`). The panel
+first runs a **live** ERC-8004 check (`POST /api/agents/verify { address,
+agentId }`): your `agentId` must actually resolve, on the ERC-8004 Identity
+Registry, to the wallet address you're using — not just a self-declared
+claim — then their connected wallet signs `addAuthorizedAgent()` itself.
+Give the admin your wallet address and your registered `agentId` first, and
+make sure your own `PROCURE_REGISTRY_ADDRESS` matches the registry they
+authorized you on (its address is shown in the panel). Until you're
+authorized on the *same* registry your agent reports to,
+`recordProcurement` reverts on-chain (`NotAuthorizedAgent`) and `report` is
+rejected server-side.
 
 > **Natural language (e.g. a human via Telegram):** "Authorize agent 0xabc
 > with agentId 42." — this is a step the *enterprise admin* does on the
