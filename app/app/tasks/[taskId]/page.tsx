@@ -26,7 +26,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ tas
       <div className="topbar">
         <div className="brand">
           <span className="dot" />
-          Agentic Enterprise Procurement — Management Platform
+          Enterprise Procurement Agent — Management Platform
         </div>
         <div className="pillrow">
           <a className="pill link" href="/">
