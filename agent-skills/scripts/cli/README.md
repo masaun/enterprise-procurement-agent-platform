@@ -191,6 +191,15 @@ echo '{"instruction":"Move 1M USDC...","asset":"USDC","amount":"1000000","minApy
 procure act --payload webhook-payload.json
 ```
 
+If the payload includes a `taskId` in valid bytes32 form (`0x` + 64 hex
+chars — what `./app`'s dispatcher always sends, see
+`app/lib/chain/taskId.ts`), `act` adopts it for both the on-chain receipt
+and the report, instead of minting a fresh random one. This is what lets
+the platform's dashboard find and update the exact task it's already
+showing as "dispatched" rather than the result landing under an id it's
+never seen. A `taskId` that isn't valid bytes32 (or a missing one, as with
+`submit`) falls back to a fresh random id, same as before.
+
 No `curl` equivalent — same reasoning as `submit`.
 
 ### `procure task <taskId>`

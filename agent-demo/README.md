@@ -190,7 +190,7 @@ agent runtime you're demoing against.
 | `AGENT_DEMO_MAX_TOOL_ITERATIONS` | Safety cap on the tool-calling loop. | `12` |
 | `AGENT_SKILLS_DIR` | Override the path to `./agent-skills` (defaults to the sibling directory). | `../agent-skills` |
 | `PROCURE_CLI_BIN` | Override the path to `procure`'s `bin/procure.ts` (defaults to the bundled one). | `../agent-skills/scripts/cli/bin/procure.ts` |
-| `DEMO_WEBHOOK_SECRET` | Default `--secret` for both the `webhook` and `serve` commands — for `serve`, must match the secret typed into `./app`'s "Webhook subscribers" form. | `demo-secret` |
+| `DEMO_WEBHOOK_SECRET` | Default `--secret` for both the `webhook` and `serve` commands — for `serve`, must match the secret typed into `./app`'s "Webhook subscribers" form. Set it in `agent-demo/.env` (not `.env.example` — that's just the committed template), and restart `serve` after changing it; see [Troubleshooting: I changed `DEMO_WEBHOOK_SECRET` but verification still fails](#troubleshooting-i-changed-demo_webhook_secret-but-verification-still-fails) if it doesn't take. | `demo-secret` |
 | `AGENT_DEMO_PORT` | Default `--port` for `agent-demo serve`. | `4021` |
 | `PROCURE_BASE_URL`, `PROCURE_PRIVATE_KEY`, `PROCURE_MCP_API_KEY`, `PROCURE_KEEPERHUB_API_KEY`, `PROCURE_KEEPERHUB_BASE_URL`, `PROCURE_KEEPERHUB_EXECUTION_MODE`, `PROCURE_REGISTRY_ADDRESS`, `PROCURE_RPC_URL` | Passed straight through (inherited process env) to the shelled-out `procure` CLI — same variables, same meaning as [`agent-skills/README.md#environment-variables`](../agent-skills/README.md#environment-variables). This agent never reads or holds these itself; it only launches a process that does. | see `agent-skills/README.md` |
 
@@ -463,6 +463,40 @@ means the fix is live; `verify_webhook_signature({"platform":"generic",
 bin/agent-demo.ts serve` has no hot-reload, so editing `src/tools.ts` has no
 effect on an already-running process. Stop it (Ctrl+C) and start it again
 (`npm run serve` or `node bin/agent-demo.ts serve`) to pick up the fix.
+
+## Troubleshooting: I changed `DEMO_WEBHOOK_SECRET` but verification still fails
+
+The server's own startup log is the ground truth here — it prints exactly
+which secret it's checking against:
+
+```
+[server] secret must match too — this server expects: demo-secret
+```
+
+If that still says the *old* value after you thought you changed it, it's
+one of these two things, in order:
+
+1. **You edited `.env.example`, not `.env`.** `.env.example` is the
+   committed template — `src/config.ts` only ever loads `.env` (via
+   `loadDotenv({ path: join(PACKAGE_DIR, ".env") })`), which is gitignored
+   and holds your actual local values. Editing `.env.example` changes what a
+   fresh `cp .env.example .env` would produce for someone else, never the
+   config this process (or any already-running one) actually reads. If
+   you don't have a `.env` yet, `cp .env.example .env` first, then edit
+   *that* file.
+2. **You edited the right file, but didn't restart.** Same as the code fix
+   above — `dotenv` loads `.env` once, at process startup, into
+   `process.env`. `node bin/agent-demo.ts serve` has no config hot-reload
+   either, so a running process keeps whatever `DEMO_WEBHOOK_SECRET` value
+   it started with regardless of later edits to `.env`. Stop it (Ctrl+C)
+   and start it again.
+
+Once the startup log shows the value you actually intended, update the
+subscriber's Secret field in `./app`'s "Webhook subscribers" panel to match
+— that field shows its stored value in plaintext in the table afterward
+(deliberately not redacted, precisely so a mismatch like this is visible by
+eye instead of only surfacing as a rejection on this side), so the two can
+be compared directly.
 
 ## Troubleshooting: a live `webhook`/`instruct` run exhausts its tool-call budget
 

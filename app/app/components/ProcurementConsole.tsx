@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { isAddress, type Hex } from "viem";
-import { Timeline } from "@/app/components/Timeline";
-import type { Policy, ProcurementTask, ProviderOffer } from "@/lib/types";
+import type { Policy, ProcurementTask, ProviderOffer, TaskStatus } from "@/lib/types";
 import { useWallet } from "@/lib/wallet/WalletProvider";
 import { registerAgentIdentityWithConnectedWallet } from "@/lib/identity/registerBrowser";
 import {
@@ -17,7 +16,7 @@ const DEFAULT_INSTRUCTION =
   "Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.";
 
 type WebhookPlatform = "hermes" | "openclaw" | "generic";
-type Subscriber = { id: string; name: string; platform: WebhookPlatform; url: string; secret: "(set)"; active: boolean; createdAt: string };
+type Subscriber = { id: string; name: string; platform: WebhookPlatform; url: string; secret: string; active: boolean; createdAt: string };
 type AuthorizedAgent = {
   address: string;
   agentId: string;
@@ -27,14 +26,6 @@ type AuthorizedAgent = {
 };
 type IdentityRegistrationResult = { agentId?: string; agentAddress: string; transactionHash: string; transferTransactionHash?: string };
 type CreatedRegistry = { registryAddress: string; owner: string; transactionHash: string; createdAt: string };
-type RegisteredAgent = {
-  agentId?: string;
-  agentAddress: string;
-  agentURI?: string;
-  transactionHash: string;
-  transferTransactionHash?: string;
-  registeredAt: string;
-};
 type OnChainReceipt = {
   taskId: string;
   enterprise: string;
@@ -60,6 +51,7 @@ export function ProcurementConsole() {
   const [minApy, setMinApy] = useState("1.0");
   const [dispatching, setDispatching] = useState(false);
   const [dispatchSummary, setDispatchSummary] = useState<string | null>(null);
+  const [dispatchOk, setDispatchOk] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [subscribers, setSubscribers] = useState<Subscriber[] | null>(null);
@@ -93,18 +85,15 @@ export function ProcurementConsole() {
   const [registeringIdentity, setRegisteringIdentity] = useState(false);
   const [identityResult, setIdentityResult] = useState<IdentityRegistrationResult | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
-  const [registeredAgents, setRegisteredAgents] = useState<RegisteredAgent[] | null>(null);
 
   const [receipts, setReceipts] = useState<OnChainReceipt[] | null>(null);
   const [dispatchedPending, setDispatchedPending] = useState<ProcurementTask[]>([]);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [registryConfigured, setRegistryConfigured] = useState(true);
 
   useEffect(() => {
     void refreshProviders();
     void refreshPolicy();
     void refreshSubscribers();
-    void refreshRegisteredAgents();
     void refreshHistory();
   }, []);
 
@@ -112,6 +101,16 @@ export function ProcurementConsole() {
     void refreshMyRegistry();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wallet.address]);
+
+  useEffect(() => {
+    // Light polling so "Activity & receipts" reflects a subscribed agent's
+    // progress (dispatched -> authenticating/discovering/evaluating_policy/
+    // executing -> the on-chain receipt) without a manual reload — the agent
+    // reports each step asynchronously, on its own clock, with no push
+    // channel back to this dashboard.
+    const id = setInterval(() => void refreshHistory(), 5000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     // Keeps the server's "active ProcurementRegistry" (lib/chain/activeRegistryStore.ts
@@ -157,13 +156,6 @@ export function ProcurementConsole() {
     } finally {
       setLoadingMyRegistry(false);
     }
-  }
-
-  async function refreshRegisteredAgents() {
-    const res = await fetch("/api/agents/identity").catch(() => undefined);
-    if (!res?.ok) return;
-    const body = await res.json();
-    setRegisteredAgents(body.agents ?? []);
   }
 
   async function refreshProviders() {
@@ -279,7 +271,6 @@ export function ProcurementConsole() {
         if (!res.ok) throw new Error(body?.message || "Registration failed");
         setIdentityResult(body as IdentityRegistrationResult);
       }
-      void refreshRegisteredAgents();
     } catch (e) {
       setIdentityError((e as Error).message);
     } finally {
@@ -393,6 +384,7 @@ export function ProcurementConsole() {
     setDispatching(true);
     setError(null);
     setDispatchSummary(null);
+    setDispatchOk(false);
     try {
       const minApyBps = Math.round(parseFloat(minApy || "0") * 100);
       const res = await fetch("/api/procurement-intents", {
@@ -404,10 +396,13 @@ export function ProcurementConsole() {
       if (!res.ok) throw new Error(body?.error || "Failed to dispatch procurement intent");
       const okCount = (body.dispatch ?? []).filter((d: { ok: boolean }) => d.ok).length;
       const total = (body.dispatch ?? []).length;
+      setDispatchOk(total > 0 && okCount > 0);
       setDispatchSummary(
         total === 0
           ? "Intent recorded, but no active webhook subscribers to dispatch to — add one below."
-          : `Dispatched to ${okCount}/${total} subscriber(s).`,
+          : okCount === total
+            ? `Successfully dispatched to the subscribed agent${total > 1 ? "s" : ""} (${okCount}/${total}).`
+            : `Dispatched to ${okCount}/${total} subscriber(s) — some deliveries failed.`,
       );
       void refreshHistory();
     } catch (e) {
@@ -421,92 +416,6 @@ export function ProcurementConsole() {
     <>
       <div className="grid">
         <div>
-          <div className="card">
-            <h2>
-              <span className="step">1</span>KeeperHub policy
-            </h2>
-            {policyDraft ? (
-              <form onSubmit={savePolicy}>
-                <div className="field-row">
-                  <div className="field">
-                    <label>Max USD per task</label>
-                    <input
-                      value={policyDraft.maxUsdPerTask}
-                      onChange={(e) => setPolicyDraft({ ...policyDraft, maxUsdPerTask: e.target.value })}
-                      inputMode="decimal"
-                    />
-                  </div>
-                  <div className="field">
-                    <label>Min APY (%)</label>
-                    <input
-                      value={policyDraft.minApyBps}
-                      onChange={(e) => setPolicyDraft({ ...policyDraft, minApyBps: e.target.value })}
-                      inputMode="decimal"
-                    />
-                  </div>
-                </div>
-                <div className="field">
-                  <label>Allowed assets (comma-separated)</label>
-                  <input value={policyDraft.allowedAssets} onChange={(e) => setPolicyDraft({ ...policyDraft, allowedAssets: e.target.value })} />
-                </div>
-                <div className="field">
-                  <label>Allowed protocols (comma-separated)</label>
-                  <input
-                    value={policyDraft.allowedProtocols}
-                    onChange={(e) => setPolicyDraft({ ...policyDraft, allowedProtocols: e.target.value })}
-                  />
-                </div>
-                <button className="btn" type="submit" disabled={savingPolicy}>
-                  {savingPolicy ? <span className="spinner" /> : null}
-                  {savingPolicy ? "Saving…" : "Save policy"}
-                </button>
-              </form>
-            ) : (
-              <div className="empty">Loading policy…</div>
-            )}
-            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: 10, marginBottom: 0 }}>
-              This is the policy a subscribed external agent fetches (read-only, via{" "}
-              <code>GET /api/agent/entrypoints/policy/invoke</code>) and is expected to honor before executing.
-            </p>
-          </div>
-
-          <div className="card">
-            <h2>
-              <span className="step">2</span>Procurement intent
-            </h2>
-            <form onSubmit={dispatchIntent}>
-              <div className="field">
-                <label>Instruction</label>
-                <textarea value={instruction} onChange={(e) => setInstruction(e.target.value)} />
-              </div>
-              <div className="field-row">
-                <div className="field">
-                  <label>Asset</label>
-                  <input value={asset} onChange={(e) => setAsset(e.target.value)} />
-                </div>
-                <div className="field">
-                  <label>Amount</label>
-                  <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
-                </div>
-              </div>
-              <div className="field">
-                <label>Minimum APY (%)</label>
-                <input value={minApy} onChange={(e) => setMinApy(e.target.value)} inputMode="decimal" style={{ maxWidth: 140 }} />
-              </div>
-              <button className="btn full" type="submit" disabled={dispatching}>
-                {dispatching ? <span className="spinner" /> : null}
-                {dispatching ? "Dispatching…" : "Dispatch to subscribed agents"}
-              </button>
-            </form>
-            {dispatchSummary ? <p style={{ color: "var(--text-muted)", fontSize: 12.5, marginTop: 10, marginBottom: 0 }}>{dispatchSummary}</p> : null}
-            {error ? <p style={{ color: "var(--danger)", fontSize: 12.5, marginTop: 10, marginBottom: 0 }}>{error}</p> : null}
-            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: 10, marginBottom: 0 }}>
-              This doesn&apos;t execute anything — it POSTs a signed webhook to every active subscriber below. The
-              subscribed agent decides whether and how to act, using its own <code>agent-skills</code> CLI, KeeperHub
-              key, and wallet.
-            </p>
-          </div>
-
           <div className="card">
             <h2>Webhook subscribers</h2>
             {subscribers === null ? (
@@ -572,12 +481,124 @@ export function ProcurementConsole() {
               </div>
               <div className="field">
                 <label>Secret</label>
-                <input value={newSub.secret} onChange={(e) => setNewSub({ ...newSub, secret: e.target.value })} required type="password" />
+                <input
+                  value={newSub.secret}
+                  onChange={(e) => setNewSub({ ...newSub, secret: e.target.value })}
+                  required
+                  type="text"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="must exactly match the receiving agent's own webhook secret"
+                />
+                <p style={{ color: "var(--text-faint)", fontSize: 11, marginTop: 6, marginBottom: 0 }}>
+                  Shown in plaintext on purpose — this is a shared HMAC secret the receiving agent must match
+                  byte-for-byte (e.g. <code>agent-demo</code>&apos;s <code>DEMO_WEBHOOK_SECRET</code>), not a login
+                  password, and it&apos;s visible in the table below afterward so a mismatch is easy to spot.
+                </p>
               </div>
               <button className="btn secondary" type="submit" disabled={addingSub}>
                 {addingSub ? "Adding…" : "Add subscriber"}
               </button>
             </form>
+          </div>
+
+          <div className="card">
+            <h2>
+              <span className="step">2</span>KeeperHub policy
+            </h2>
+            {policyDraft ? (
+              <form onSubmit={savePolicy}>
+                <div className="field-row">
+                  <div className="field">
+                    <label>Max USD per task</label>
+                    <input
+                      value={policyDraft.maxUsdPerTask}
+                      onChange={(e) => setPolicyDraft({ ...policyDraft, maxUsdPerTask: e.target.value })}
+                      inputMode="decimal"
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Min APY (%)</label>
+                    <input
+                      value={policyDraft.minApyBps}
+                      onChange={(e) => setPolicyDraft({ ...policyDraft, minApyBps: e.target.value })}
+                      inputMode="decimal"
+                    />
+                  </div>
+                </div>
+                <div className="field">
+                  <label>Allowed assets (comma-separated)</label>
+                  <input value={policyDraft.allowedAssets} onChange={(e) => setPolicyDraft({ ...policyDraft, allowedAssets: e.target.value })} />
+                </div>
+                <div className="field">
+                  <label>Allowed protocols (comma-separated)</label>
+                  <input
+                    value={policyDraft.allowedProtocols}
+                    onChange={(e) => setPolicyDraft({ ...policyDraft, allowedProtocols: e.target.value })}
+                  />
+                </div>
+                <button className="btn" type="submit" disabled={savingPolicy}>
+                  {savingPolicy ? <span className="spinner" /> : null}
+                  {savingPolicy ? "Saving…" : "Save policy"}
+                </button>
+              </form>
+            ) : (
+              <div className="empty">Loading policy…</div>
+            )}
+            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: 10, marginBottom: 0 }}>
+              This is the policy a subscribed external agent fetches (read-only, via{" "}
+              <code>GET /api/agent/entrypoints/policy/invoke</code>) and is expected to honor before executing.
+            </p>
+          </div>
+
+          <div className="card">
+            <h2>
+              <span className="step">3</span>Procurement intent
+            </h2>
+            <form onSubmit={dispatchIntent}>
+              <div className="field">
+                <label>Instruction</label>
+                <textarea value={instruction} onChange={(e) => setInstruction(e.target.value)} />
+              </div>
+              <div className="field-row">
+                <div className="field">
+                  <label>Asset</label>
+                  <input value={asset} onChange={(e) => setAsset(e.target.value)} />
+                </div>
+                <div className="field">
+                  <label>Amount</label>
+                  <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" />
+                </div>
+              </div>
+              <div className="field">
+                <label>Minimum APY (%)</label>
+                <input value={minApy} onChange={(e) => setMinApy(e.target.value)} inputMode="decimal" style={{ maxWidth: 140 }} />
+              </div>
+              <button className="btn full" type="submit" disabled={dispatching}>
+                {dispatching ? <span className="spinner" /> : null}
+                {dispatching ? "Dispatching…" : "Dispatch to subscribed agents"}
+              </button>
+            </form>
+            {dispatchSummary ? (
+              <p
+                style={{
+                  color: dispatchOk ? "var(--success)" : "var(--text-muted)",
+                  fontWeight: dispatchOk ? 600 : 400,
+                  fontSize: 12.5,
+                  marginTop: 10,
+                  marginBottom: 0,
+                }}
+              >
+                {dispatchOk ? "✓ " : ""}
+                {dispatchSummary}
+              </p>
+            ) : null}
+            {error ? <p style={{ color: "var(--danger)", fontSize: 12.5, marginTop: 10, marginBottom: 0 }}>{error}</p> : null}
+            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: 10, marginBottom: 0 }}>
+              This doesn&apos;t execute anything — it POSTs a signed webhook to every active subscriber below. The
+              subscribed agent decides whether and how to act, using its own <code>agent-skills</code> CLI, KeeperHub
+              key, and wallet.
+            </p>
           </div>
         </div>
 
@@ -606,153 +627,108 @@ export function ProcurementConsole() {
           </div>
 
           <div className="card">
-            <h2>Authorize Agent (by Registering in the ERC-8004)</h2>
-            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -4, marginBottom: 12 }}>
-              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry. Enter the agent wallet address to
-              register it for — the identity is minted and then transferred to that address on-chain, so this app
-              never needs the agent wallet&apos;s own private key.{" "}
-              {wallet.address ? (
-                <>
-                  Your connected wallet (<code>{wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}</code>) will
-                  sign and pay gas for this.
-                </>
-              ) : (
-                <>
-                  Signed and gas-paid by <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code> since no wallet is connected —
-                  use &quot;Connect Wallet&quot; above to pay from your own wallet instead.
-                </>
-              )}
-            </p>
-            <form onSubmit={registerIdentity}>
-              <div className="field">
-                <label>Agent Wallet Address</label>
-                <input
-                  value={identityDraft.agentWalletAddress}
-                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentWalletAddress: e.target.value })}
-                  placeholder={
-                    wallet.address
-                      ? "0x… (defaults to your connected wallet if left blank)"
-                      : "0x… (defaults to the ENTERPRISE_ADMIN_PRIVATE_KEY wallet if left blank)"
-                  }
-                />
-              </div>
-              <div className="field">
-                <label>Agent URI (optional)</label>
-                <input
-                  value={identityDraft.agentURI}
-                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentURI: e.target.value })}
-                  placeholder="https://.../.well-known/agent-registration.json"
-                />
-              </div>
-              <button className="btn secondary" type="submit" disabled={registeringIdentity || (Boolean(wallet.address) && !wallet.isOnBaseSepolia)}>
-                {registeringIdentity ? <span className="spinner" /> : null}
-                {registeringIdentity ? "Registering on-chain…" : "Register in ERC-8004"}
-              </button>
-              {identityError ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{identityError}</p> : null}
-            </form>
-            {identityResult ? (
-              <div className="provider-row" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
-                <div className="provider-main">
-                  <div className="provider-name">
-                    Registered <span className="badge ok">agentId {identityResult.agentId ?? "unknown"}</span>
-                  </div>
-                  <div className="provider-meta mono">{identityResult.agentAddress}</div>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <a
-                    className="pill link"
-                    href={`https://sepolia.basescan.org/tx/${identityResult.transferTransactionHash ?? identityResult.transactionHash}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    tx
-                  </a>
-                  <button
-                    className="btn secondary"
-                    onClick={() => setNewAgent({ address: identityResult.agentAddress, agentId: identityResult.agentId ?? "" })}
-                  >
-                    Use below ↓
-                  </button>
-                </div>
-              </div>
+            <h2>
+              <span className="step">4</span>Activity & receipts
+            </h2>
+            {!registryConfigured ? (
+              <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginBottom: 12 }}>
+                No active <code>ProcurementRegistry</code> yet — on-chain history is unavailable until a wallet
+                connects above and creates/selects one in the &quot;Authorized agents&quot; panel.
+              </p>
             ) : null}
-
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
-              <label style={{ marginBottom: 8 }}>Agents registered via this panel</label>
-              {registeredAgents === null ? (
-                <div className="empty">Loading…</div>
-              ) : registeredAgents.length === 0 ? (
-                <div className="empty">No ERC-8004 identities registered yet.</div>
-              ) : (
-                <div className="table-wrap">
-                  <table className="simple-table">
-                    <thead>
-                      <tr>
-                        <th>Agent ID</th>
-                        <th>Agent Address</th>
-                        <th>Agent URI</th>
-                        <th>Registered</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {registeredAgents.map((a) => (
-                        <tr key={a.agentId ?? a.agentAddress}>
-                          <td>{a.agentId ?? "—"}</td>
-                          <td className="mono">{a.agentAddress}</td>
-                          <td className="mono">{a.agentURI ?? "—"}</td>
-                          <td>{new Date(a.registeredAt).toLocaleString()}</td>
-                          <td>
+            {receipts === null ? (
+              <div className="empty">Loading…</div>
+            ) : receipts.length === 0 && dispatchedPending.length === 0 ? (
+              <div className="empty">Nothing recorded yet.</div>
+            ) : (
+              <div className="table-wrap">
+                <table className="simple-table">
+                  <thead>
+                    <tr>
+                      <th>Task</th>
+                      <th>Request</th>
+                      <th>Status</th>
+                      <th>Agent</th>
+                      <th>Tx</th>
+                      <th>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dispatchedPending.map((t) => (
+                      <tr key={t.taskId}>
+                        <td className="mono">{t.taskId.slice(0, 10)}…</td>
+                        <td>
+                          {t.request.instruction.slice(0, 50)}
+                          {t.request.instruction.length > 50 ? "…" : ""}
+                          <div className="provider-meta">
+                            {t.request.asset} {t.request.amount}
+                          </div>
+                        </td>
+                        <td>
+                          <PendingStatusBadge status={t.status} />
+                        </td>
+                        <td className="mono">—</td>
+                        <td>
+                          {t.onChainTransactionHash ? (
                             <a
                               className="pill link"
-                              href={`https://sepolia.basescan.org/tx/${a.transferTransactionHash ?? a.transactionHash}`}
+                              href={`https://sepolia.basescan.org/tx/${t.onChainTransactionHash}`}
                               target="_blank"
                               rel="noreferrer"
                             >
                               tx
                             </a>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
-              <label style={{ marginBottom: 8 }}>Authorized agents in your ProcurementRegistry (live)</label>
-              {authorizedAgents === null ? (
-                <div className="empty">Loading…</div>
-              ) : authorizedAgents.length === 0 ? (
-                <div className="empty">
-                  No agents authorized yet — authorize one in the &quot;Authorized agents&quot; panel below.
-                </div>
-              ) : (
-                <div className="table-wrap">
-                  <table className="simple-table">
-                    <thead>
-                      <tr>
-                        <th>Agent Address</th>
-                        <th>Agent ID</th>
-                        <th>Status</th>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>
+                          <a className="pill link" href={`/tasks/${t.taskId}`} target="_blank" rel="noreferrer">
+                            view
+                          </a>
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody>
-                      {authorizedAgents.map((a) => (
-                        <tr key={a.address}>
-                          <td className="mono">{a.address}</td>
-                          <td>{a.agentId}</td>
-                          <td>
-                            <span className={`badge ${a.active ? "ok" : "muted"}`}>{a.active ? "authorized" : "revoked"}</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
+                    ))}
+                    {receipts.map((r) => (
+                      <tr key={r.taskId}>
+                        <td className="mono">{r.taskId.slice(0, 10)}…</td>
+                        <td>
+                          {r.detail ? (
+                            <>
+                              {r.detail.request.instruction.slice(0, 50)}
+                              {r.detail.request.instruction.length > 50 ? "…" : ""}
+                            </>
+                          ) : (
+                            "—"
+                          )}
+                          <div className="provider-meta">
+                            {r.asset} {r.amount} · {(r.apyBps / 100).toFixed(2)}% APY
+                          </div>
+                        </td>
+                        <td>
+                          <StatusBadge status={r.status} />
+                        </td>
+                        <td className="mono">{r.agent ? `${r.agent.slice(0, 6)}…${r.agent.slice(-4)}` : "—"}</td>
+                        <td>
+                          {r.transactionHash ? (
+                            <a className="pill link" href={`https://sepolia.basescan.org/tx/${r.transactionHash}`} target="_blank" rel="noreferrer">
+                              tx
+                            </a>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td>
+                          <a className="pill link" href={`/tasks/${r.taskId}`} target="_blank" rel="noreferrer">
+                            view
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           <div className="card">
@@ -865,6 +841,113 @@ export function ProcurementConsole() {
           </div>
 
           <div className="card">
+            <h2>Authorize Agent (by Registering in the ERC-8004)</h2>
+            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -4, marginBottom: 12 }}>
+              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry. Enter the agent wallet address to
+              register it for — the identity is minted and then transferred to that address on-chain, so this app
+              never needs the agent wallet&apos;s own private key.{" "}
+              {wallet.address ? (
+                <>
+                  Your connected wallet (<code>{wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}</code>) will
+                  sign and pay gas for this.
+                </>
+              ) : (
+                <>
+                  Signed and gas-paid by <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code> since no wallet is connected —
+                  use &quot;Connect Wallet&quot; above to pay from your own wallet instead.
+                </>
+              )}
+            </p>
+            <form onSubmit={registerIdentity}>
+              <div className="field">
+                <label>Agent Wallet Address</label>
+                <input
+                  value={identityDraft.agentWalletAddress}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentWalletAddress: e.target.value })}
+                  placeholder={
+                    wallet.address
+                      ? "0x… (defaults to your connected wallet if left blank)"
+                      : "0x… (defaults to the ENTERPRISE_ADMIN_PRIVATE_KEY wallet if left blank)"
+                  }
+                />
+              </div>
+              <div className="field">
+                <label>Agent URI (optional)</label>
+                <input
+                  value={identityDraft.agentURI}
+                  onChange={(e) => setIdentityDraft({ ...identityDraft, agentURI: e.target.value })}
+                  placeholder="https://.../.well-known/agent-registration.json"
+                />
+              </div>
+              <button className="btn secondary" type="submit" disabled={registeringIdentity || (Boolean(wallet.address) && !wallet.isOnBaseSepolia)}>
+                {registeringIdentity ? <span className="spinner" /> : null}
+                {registeringIdentity ? "Registering on-chain…" : "Register in ERC-8004"}
+              </button>
+              {identityError ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{identityError}</p> : null}
+            </form>
+            {identityResult ? (
+              <div className="provider-row" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+                <div className="provider-main">
+                  <div className="provider-name">
+                    Registered <span className="badge ok">agentId {identityResult.agentId ?? "unknown"}</span>
+                  </div>
+                  <div className="provider-meta mono">{identityResult.agentAddress}</div>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <a
+                    className="pill link"
+                    href={`https://sepolia.basescan.org/tx/${identityResult.transferTransactionHash ?? identityResult.transactionHash}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    tx
+                  </a>
+                  <button
+                    className="btn secondary"
+                    onClick={() => setNewAgent({ address: identityResult.agentAddress, agentId: identityResult.agentId ?? "" })}
+                  >
+                    Use below ↓
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+              <label style={{ marginBottom: 8 }}>Authorized agents in your ProcurementRegistry (live)</label>
+              {authorizedAgents === null ? (
+                <div className="empty">Loading…</div>
+              ) : authorizedAgents.length === 0 ? (
+                <div className="empty">
+                  No agents authorized yet — authorize one in the &quot;Authorized agents&quot; panel below.
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="simple-table">
+                    <thead>
+                      <tr>
+                        <th>Agent Address</th>
+                        <th>Agent ID</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {authorizedAgents.map((a) => (
+                        <tr key={a.address}>
+                          <td className="mono">{a.address}</td>
+                          <td>{a.agentId}</td>
+                          <td>
+                            <span className={`badge ${a.active ? "ok" : "muted"}`}>{a.active ? "authorized" : "revoked"}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
             <h2>Authorized agents (live ERC-8004 gate)</h2>
             <div className="field" style={{ marginBottom: 8 }}>
               <label>Target ProcurementRegistry</label>
@@ -951,65 +1034,6 @@ export function ProcurementConsole() {
               {agentError ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{agentError}</p> : null}
             </form>
           </div>
-
-          <div className="card">
-            <h2>
-              <span className="step">3</span>Activity & receipts
-            </h2>
-            {!registryConfigured ? (
-              <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginBottom: 12 }}>
-                No active <code>ProcurementRegistry</code> yet — on-chain history is unavailable until a wallet
-                connects above and creates/selects one in the &quot;Authorized agents&quot; panel.
-              </p>
-            ) : null}
-            {dispatchedPending.length > 0 ? (
-              <div style={{ marginBottom: 12 }}>
-                {dispatchedPending.map((t) => (
-                  <div className="provider-row" key={t.taskId}>
-                    <div className="provider-main">
-                      <div className="provider-name">{t.request.instruction.slice(0, 60)}</div>
-                      <div className="provider-meta">
-                        {t.request.asset} {t.request.amount} · <span className="badge warn">dispatched, awaiting agent</span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            {receipts === null ? (
-              <div className="empty">Loading…</div>
-            ) : receipts.length === 0 && dispatchedPending.length === 0 ? (
-              <div className="empty">Nothing recorded yet.</div>
-            ) : (
-              receipts.map((r) => (
-                <div key={r.taskId}>
-                  <div className="provider-row" style={{ cursor: "pointer" }} onClick={() => setExpanded(expanded === r.taskId ? null : r.taskId)}>
-                    <div className="provider-main">
-                      <div className="provider-name mono">{r.taskId.slice(0, 10)}…</div>
-                      <div className="provider-meta">
-                        {r.asset} {r.amount} · agent {r.agent.slice(0, 8)}… ·{" "}
-                        <StatusBadge status={r.status} />
-                      </div>
-                    </div>
-                    <a
-                      className="pill link"
-                      href={`https://sepolia.basescan.org/tx/${r.transactionHash}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      tx
-                    </a>
-                  </div>
-                  {expanded === r.taskId && r.detail ? (
-                    <div style={{ paddingBottom: 14 }}>
-                      <Timeline events={r.detail.timeline} />
-                    </div>
-                  ) : null}
-                </div>
-              ))
-            )}
-          </div>
         </div>
       </div>
     </>
@@ -1024,4 +1048,19 @@ function StatusBadge({ status }: { status: "completed" | "rejected" | "failed" }
   };
   const m = map[status] ?? { cls: "muted", label: status };
   return <span className={`badge ${m.cls}`}>{m.label}</span>;
+}
+
+/** Labels every pre-receipt `TaskStatus` a subscribed agent can report — see `ProcurementReportSchema` in lib/types.ts. */
+function PendingStatusBadge({ status }: { status: TaskStatus }) {
+  const map: Record<TaskStatus, string> = {
+    dispatched: "dispatched, awaiting agent",
+    authenticating: "authenticating",
+    discovering: "discovering providers",
+    evaluating_policy: "evaluating policy",
+    executing: "executing",
+    completed: "completed",
+    rejected: "rejected",
+    failed: "failed",
+  };
+  return <span className="badge warn">{map[status] ?? status}</span>;
 }

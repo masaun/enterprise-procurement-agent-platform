@@ -2,6 +2,7 @@ import { ProcurementRequestSchema, type TimelineEvent } from "@/lib/types";
 import { getConfiguredPolicy } from "@/lib/keeperhub/policy";
 import { dispatchProcurementIntent } from "@/lib/webhooks/dispatch";
 import { listTasks, saveTask } from "@/lib/store";
+import { randomTaskId } from "@/lib/chain/taskId";
 
 /**
  * The human admin's "describe a procurement intent" action — replaces the
@@ -22,7 +23,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "invalid_request", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const taskId = crypto.randomUUID();
+  // A bytes32 hex id, not a UUID — the same identifier space
+  // `ProcurementRegistry.recordProcurement()` expects on-chain, so an
+  // agent's `procure act` can adopt this exact taskId (see
+  // agent-skills/scripts/cli/src/orchestrate.ts) instead of minting its own,
+  // uncorrelated one. See lib/chain/taskId.ts.
+  const taskId = randomTaskId();
   const enterpriseId = process.env.ENTERPRISE_ID || "default-enterprise";
   const policy = getConfiguredPolicy();
   const now = new Date().toISOString();

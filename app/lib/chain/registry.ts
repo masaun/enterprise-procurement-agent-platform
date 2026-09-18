@@ -37,6 +37,37 @@ function getPublicClient() {
   return createPublicClient({ chain: baseSepolia, transport: http(getRpcUrl()) });
 }
 
+/**
+ * Base Sepolia's public RPC (`sepolia.base.org`) caps a single `eth_getLogs`
+ * call at a 10,000-block range — `fromBlock: "earliest"` fails outright
+ * ("eth_getLogs is limited to a 10,000 range") once the chain is past block
+ * ~10,000, which Base Sepolia has been for a long time. Every
+ * `ProcurementRegistry` is freshly deployed per wallet via the factory (see
+ * `activeRegistryStore.ts`), so its events only ever live in a recent
+ * window — this scans back `HISTORY_LOOKBACK_BLOCKS` from the chain tip in
+ * `MAX_LOG_RANGE`-sized chunks instead of from genesis. A real deployment
+ * (or an older registry outliving this lookback) would use an indexer
+ * instead.
+ */
+const MAX_LOG_RANGE = 9_999n;
+const HISTORY_LOOKBACK_BLOCKS = 200_000n;
+
+async function getContractEventsInLookbackWindow(
+  publicClient: ReturnType<typeof getPublicClient>,
+  params: { address: Address; abi: typeof PROCUREMENT_REGISTRY_ABI; eventName: "AgentAuthorized" | "AgentRevoked" | "ProcurementRecorded" },
+) {
+  const latest = await publicClient.getBlockNumber();
+  const earliest = latest > HISTORY_LOOKBACK_BLOCKS ? latest - HISTORY_LOOKBACK_BLOCKS : 0n;
+
+  const logs = [];
+  for (let from = earliest; from <= latest; from += MAX_LOG_RANGE + 1n) {
+    const to = from + MAX_LOG_RANGE > latest ? latest : from + MAX_LOG_RANGE;
+    const chunk = await publicClient.getContractEvents({ ...params, fromBlock: from, toBlock: to });
+    logs.push(...chunk);
+  }
+  return logs;
+}
+
 export async function isAgentAuthorizedOnChain(agent: Address): Promise<boolean> {
   const publicClient = getPublicClient();
   return publicClient.readContract({
@@ -56,28 +87,25 @@ export async function isAgentAuthorizedOnChain(agent: Address): Promise<boolean>
  * not whichever one some other connected wallet loaded last.
  *
  * The `authorizedAgents` mapping itself isn't enumerable, so addresses are
- * discovered from `AgentAuthorized`/`AgentRevoked` logs (fine at demo scale
- * via a single `getLogs` call from genesis; a real deployment would paginate
- * or use an indexer) — but the returned `active` flag is always a fresh,
- * authoritative read of the mapping itself, not inferred from log order.
+ * discovered from `AgentAuthorized`/`AgentRevoked` logs, scanned in bounded
+ * chunks via `getContractEventsInLookbackWindow` (a single `getLogs` call
+ * from genesis fails outright — see that helper's doc comment) — but the
+ * returned `active` flag is always a fresh, authoritative read of the
+ * mapping itself, not inferred from log order.
  */
 export async function readAuthorizedAgentsOnChain(registryAddress: Address): Promise<Array<{ address: Address; active: boolean }>> {
   const publicClient = getPublicClient();
 
   const [authorizedLogs, revokedLogs] = await Promise.all([
-    publicClient.getContractEvents({
+    getContractEventsInLookbackWindow(publicClient, {
       address: registryAddress,
       abi: PROCUREMENT_REGISTRY_ABI,
       eventName: "AgentAuthorized",
-      fromBlock: "earliest",
-      toBlock: "latest",
     }),
-    publicClient.getContractEvents({
+    getContractEventsInLookbackWindow(publicClient, {
       address: registryAddress,
       abi: PROCUREMENT_REGISTRY_ABI,
       eventName: "AgentRevoked",
-      fromBlock: "earliest",
-      toBlock: "latest",
     }),
   ]);
 
@@ -124,20 +152,17 @@ export type OnChainReceipt = {
 };
 
 /**
- * Reads every `ProcurementRecorded` event ever emitted — the dashboard's
- * activity list. Fine at demo scale via a single `getLogs` call from genesis;
- * a real deployment would paginate by block range or use an indexer.
+ * Reads every `ProcurementRecorded` event within the lookback window (see
+ * `getContractEventsInLookbackWindow`) — the dashboard's activity list.
  */
 export async function readProcurementHistory(): Promise<OnChainReceipt[]> {
   const publicClient = getPublicClient();
   const address = getRegistryAddress();
 
-  const logs = await publicClient.getContractEvents({
+  const logs = await getContractEventsInLookbackWindow(publicClient, {
     address,
     abi: PROCUREMENT_REGISTRY_ABI,
     eventName: "ProcurementRecorded",
-    fromBlock: "earliest",
-    toBlock: "latest",
   });
 
   return logs.map((log) => {

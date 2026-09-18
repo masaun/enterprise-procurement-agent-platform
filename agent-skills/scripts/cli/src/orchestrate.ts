@@ -17,8 +17,20 @@ import { getAccount, randomTaskId, recordProcurementOnChain } from "./registry.t
  *
  * Used by both `procure submit` (human/CLI-operator-initiated) and
  * `procure act` (webhook-triggered — see agent-skills/SKILL.md).
+ *
+ * `requestedTaskId` — for `act`, the `taskId` the platform already assigned
+ * when it recorded and dispatched this intent (`app/lib/chain/taskId.ts`,
+ * embedded in the webhook payload by `app/lib/webhooks/dispatch.ts`). When
+ * it's a valid bytes32 hex, it's reused as-is for both the on-chain receipt
+ * and the report below, so the platform's dashboard can find and update the
+ * exact task it's already showing as "dispatched" instead of this call's
+ * result landing under a brand-new id the dashboard has never seen. Falls
+ * back to a fresh `randomTaskId()` — the previous, always-random behavior —
+ * for `submit` (no prior platform-side task to correlate to) and for any
+ * payload whose `taskId` isn't in that format (e.g. an older, pre-fix
+ * `./app` still sending a UUID).
  */
-export async function runProcurementLocally(config: CliConfig, request: ProcurementRequest) {
+export async function runProcurementLocally(config: CliConfig, request: ProcurementRequest, requestedTaskId?: string) {
   const timeline: Array<{ kind: string; label: string; detail?: unknown; at: string }> = [];
   const push = (kind: string, label: string, detail?: unknown) =>
     timeline.push({ kind, label, detail, at: new Date().toISOString() });
@@ -50,7 +62,7 @@ export async function runProcurementLocally(config: CliConfig, request: Procurem
   });
 
   const account = getAccount(config);
-  const taskId = randomTaskId();
+  const taskId = requestedTaskId && /^0x[0-9a-fA-F]{64}$/.test(requestedTaskId) ? (requestedTaskId as Hex) : randomTaskId();
 
   if (eligible.length === 0) {
     push("task.failed", "No discovered provider satisfies the enterprise policy.");

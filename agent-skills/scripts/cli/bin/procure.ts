@@ -152,7 +152,8 @@ program
       const raw = opts.payload === "-" ? readFileSync(0, "utf8") : readFileSync(opts.payload, "utf8");
       const payload = JSON.parse(raw);
       const request = requestFromWebhookPayload(payload);
-      const task = await runProcurementLocally(config, request);
+      const requestedTaskId = typeof payload.taskId === "string" ? payload.taskId : undefined;
+      const task = await runProcurementLocally(config, request, requestedTaskId);
       report("procurement task completed (from webhook payload)", task, opts.json);
     } catch (e) {
       fail(e as Error, opts.json);

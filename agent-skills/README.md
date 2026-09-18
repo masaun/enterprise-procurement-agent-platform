@@ -95,6 +95,16 @@ sequenceDiagram
 | **Report** | `POST /api/agent/entrypoints/report/invoke` | SIWX (same `PROCURE_PRIVATE_KEY`) + the platform's live on-chain ERC-8004 gate | Files the rich detail (timeline, policy evaluation) for the dashboard, keyed by the same `taskId` as the on-chain receipt. |
 | Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id. |
 
+**That `taskId` is the same one `./app` assigned when it dispatched the
+webhook**, not one this CLI invents. `procure act` reads `taskId` straight
+from the received payload and reuses it for both the on-chain receipt and
+the report (see `scripts/cli/src/orchestrate.ts`'s `runProcurementLocally`);
+only `procure submit` (no prior platform-side task to correlate to) mints a
+fresh one. This is what lets the dashboard's "Activity & receipts" table
+find and update the exact row it already shows as "dispatched" once this
+agent reports back, instead of the result appearing as an unrelated,
+uncorrelated task.
+
 **Before any of this works, the enterprise admin must authorize this
 agent's wallet** via the dashboard's "Authorized agents" panel, with a
 wallet connected there (it must be the target registry's owner). The panel
