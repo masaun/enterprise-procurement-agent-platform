@@ -355,3 +355,5 @@ agents" panel (`POST /api/agents/verify` + `addAuthorizedAgent()` via
 
 - Demonstrate the interaction between the Demo Agent (`./agent-demo`) and Web App (`./app`):    
   https://youtu.be/ZZuMhfOZRqs?si=etQZqzL-GYKBkl2P
+
+- NOTE: The value, which is inputted in the `secret` field of the "Webhook subscribers" panel on the Web App (`./app`), must match with the value-stored in the `DEMO_WEBHOOK_SECRET` in the `./agent-demo/.env`
