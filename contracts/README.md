@@ -4,7 +4,7 @@ A standalone [Foundry](https://book.getfoundry.sh/) project — separate from `.
 
 ## What's here
 
-`ProcurementRegistry.sol` is the durable, on-chain source of truth for the platform's activity/receipt dashboard (see [`../plan/PLAN.md`](../plan/PLAN.md) and [`../README.md`](../README.md) for the full architecture). Two roles:
+`ProcurementRegistry.sol` is the durable, on-chain source of truth for the platform's activity/receipt dashboard (see [`../README.md`](../README.md) for the full architecture). Two roles:
 
 - **Owner** (`Ownable`) — whichever wallet deployed/created the registry. Administers `authorizedAgents` via `addAuthorizedAgent`/`revokeAuthorizedAgent`, populated only after `./app`'s own live ERC-8004 identity/reputation check passes for an external agent's wallet. The contract deliberately doesn't encode the ERC-8004 registries' own ABI — that verification happens off-chain in `app/lib/identity/gate.ts`, and the result is what gets written here. `./app` itself holds no owner key of any kind — see the factory paragraph below.
 - **Authorized agent** — an external agent's own treasury wallet (Hermes/OpenClaw, via the `agent-skills` CLI). Calls `recordProcurement(...)` itself, with its own key, after executing a procurement via KeeperHub. The contract trusts `msg.sender` as the agent address; it doesn't custody funds or execute anything.

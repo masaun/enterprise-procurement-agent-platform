@@ -36,11 +36,14 @@ flowchart LR
         HistoryOne["/procurement-history/[taskId] (GET)"]
         Webhooks["/webhooks/subscribers (CRUD)"]
         IdentityReg["/agents/identity (POST)"]
+        Verify["/agents/verify (POST)"]
         Agents["/agents/authorized (CRUD)"]
+        ActiveReg["/procurement-registry/active (GET/POST)"]
+        Faucet["/faucet (GET/POST)"]
     end
 
     subgraph AgentAPI["app/api/agent — agent-facing surface"]
-        Card[".well-known/agent-card.json"]
+        Card[".well-known/agent-card.json\n+ oasf-record.json"]
         Entry["entrypoints/:key/invoke\n(authenticate, discover, policy, report, procurement_status)"]
         Tasks["tasks/* (A2A async tasks)"]
         MCP["mcp — read-only MCP tools"]
@@ -76,16 +79,20 @@ flowchart LR
     UI -->|"'view' link"| TaskPage --> HistoryOne --> Registry
     UI --> Webhooks --> Subs
     UI --> IdentityReg --> Register
+    UI --> Verify --> GateTs
     UI --> Agents --> GateTs
     Agents --> Registry
+    UI --> ActiveReg
+    UI --> Faucet
     Entry --> Agent
     Agent --> Orchestrate
     Entry -->|report entrypoint| GateTs
     GateTs --> Registry
     MCP --> Orchestrate
     Orchestrate -->|"A2A: fetchAgentCardWithEntrypoints + invokeAgent"| Mock
-    Registry -->|"read/write ProcurementRegistry"| Chain[("Base Sepolia")]
+    Registry -->|"read/write ProcurementRegistry\n(whichever registry ActiveReg marks active)"| Chain[("Base Sepolia")]
     Register -->|"mint ERC-8004 identity"| Chain
+    Faucet -->|"mint test USDC via Aave's\npermissionless Faucet contract"| Chain
 ```
 
 ## Request lifecycle: one procurement intent, end to end
@@ -185,6 +192,9 @@ fixed in this route and `lib/chain/taskId.ts`/`agent-skills/scripts/cli/src/orch
 | View one order (admin) | `GET /api/procurement-history/[taskId]` | admin-only, not agent-facing | Backs `/tasks/[taskId]`, the "view" link on each "Activity & receipts" row — the same merge as above, narrowed to one task. |
 | Register an ERC-8004 identity (admin) | `POST /api/agents/identity` | admin-only, not agent-facing | Mints a new ERC-8004 identity (`lib/identity/register.ts`), signed by `ENTERPRISE_ADMIN_PRIVATE_KEY`. Accepts an optional `agentWalletAddress`; when given, the minted identity is transferred to that address on-chain so it ends up owned by the agent wallet the admin names, not the signer. Only used when the admin hasn't connected a wallet via "Connect Wallet" — when one is connected, the panel signs and pays gas with it directly in the browser instead (`lib/identity/registerBrowser.ts`), and this route is bypassed entirely. A prerequisite for the row below — do this once per agent wallet first. |
 | Authorize an agent (admin) | `POST /api/agents/verify` + connected-wallet `addAuthorizedAgent()` | admin-only, not agent-facing; requires a connected wallet | Runs the live ERC-8004 verify (`lib/identity/gate.ts`); on success, the connected wallet (the target registry's owner) signs `ProcurementRegistry.addAuthorizedAgent()` itself (`lib/chain/registryBrowser.ts`) — no server-signed fallback. `POST /api/agents/authorized/record` then records the effect for the dashboard's list. |
+| Create a `ProcurementRegistry` (admin) | connected-wallet `ProcurementRegistryFactory.createNewProcurementRegistry()` | admin-only, not agent-facing; requires a connected wallet | The "New ProcurementRegistry contract creation" panel (`lib/chain/factoryBrowser.ts`) — the connected wallet deploys and becomes the owner of its own registry instance; there's no platform-held deploy key. |
+| Track the active registry (admin) | `GET`/`POST /api/procurement-registry/active` | admin-only, not agent-facing | In-memory pointer (`lib/chain/activeRegistryStore.ts`) to whichever registry the connected wallet most recently resolved/created/picked — this is what `GET /api/procurement-history` reads from and what the inbound `report` entrypoint's allowlist gate checks against. Kept in sync automatically by the dashboard; no manual admin control. |
+| Mint test USDC (admin) | `GET`/`POST /api/faucet` | admin-only, not agent-facing | The "Faucet" panel (`/faucet`, `lib/chain/faucet.ts` / `faucetBrowser.ts`) — mints Aave's Base Sepolia test USDC to any address via Aave's own permissionless `Faucet` contract, useful for funding KeeperHub's execution wallet ahead of a real `procure act`/`submit` run. Signed by `ENTERPRISE_ADMIN_PRIVATE_KEY`, or by the connected wallet if one is attached. |
 
 Only `report` is gated by anything beyond a signature — and it's gated
 twice: SIWX proves the caller controls the address, then the on-chain
@@ -196,11 +206,11 @@ proves the platform actually trusts that address to report at all.
 | Path | Responsibility |
 | --- | --- |
 | `app/page.tsx`, `app/components/*` | Dashboard UI: editable policy form, procurement-intent form (dispatch button disables + spinners while the `POST` is in flight), webhook subscriber CRUD, authorized-agent CRUD, the "Activity & receipts" table — one row per task, live-polled (`GET /api/procurement-history` every 5s) so its Status column tracks a subscribed agent from `dispatched` through the on-chain receipt without a manual reload — "Connect Wallet" (`app/components/ConnectWalletButton.tsx` — a picker between MetaMask and Rabby Wallet, backed by `lib/wallet/WalletProvider.tsx`). |
-| `app/tasks/[taskId]/page.tsx` | **New.** The "Activity & receipts" table's per-row "view" link — a permalink with the full order detail (request, selected provider, policy evaluation, KeeperHub execution, on-chain receipt, timeline) for one task. Fetches `GET /api/procurement-history/[taskId]` rather than importing `lib/store.ts`/`lib/chain/registry.ts` directly (Next.js dev/Turbopack doesn't reliably share that module-level state between a Page's and a Route Handler's compiled module graph). |
+| `app/tasks/[taskId]/page.tsx` | The "Activity & receipts" table's per-row "view" link — a permalink with the full order detail (request, selected provider, policy evaluation, KeeperHub execution, on-chain receipt, timeline) for one task. Fetches `GET /api/procurement-history/[taskId]` rather than importing `lib/store.ts`/`lib/chain/registry.ts` directly (Next.js dev/Turbopack doesn't reliably share that module-level state between a Page's and a Route Handler's compiled module graph). |
 | `app/api/agent/[...lucid]/route.ts` | Binds the real `@lucid-agents/http` route plan (`runtime.http.routes`) straight into Next.js — see `lib/lucid/http-bind.ts`. |
 | `app/api/agent/mcp/route.ts` | MCP endpoint: `McpServer` + `WebStandardStreamableHTTPServerTransport`, stateless, read-only tools only. |
 | `app/api/mock-providers/[providerId]/[...lucid]/route.ts` | Same binding pattern, for each mock provider's own tiny `@lucid-agents/core` runtime — unchanged; these are market data, not actor logic. |
-| `app/api/policy`, `app/api/procurement-intents`, `app/api/procurement-history[/:taskId]`, `app/api/webhooks/subscribers[/:id]`, `app/api/agents/identity`, `app/api/agents/authorized[/:address]` | The platform's own admin API — not part of the agent-facing contract (see `agent-skills/references/api-reference.md`). `/procurement-history` now returns every non-terminal task (not just `status: "dispatched"`), and `/procurement-history/[taskId]` (**new**) backs the task detail page above. |
+| `app/api/policy`, `app/api/procurement-intents`, `app/api/procurement-history[/:taskId]`, `app/api/webhooks/subscribers[/:id]`, `app/api/agents/identity`, `app/api/agents/verify`, `app/api/agents/authorized[/:address]`, `app/api/procurement-registry/active`, `app/api/faucet` | The platform's own admin API — not part of the agent-facing contract (see `agent-skills/references/api-reference.md`). `/procurement-history` returns every non-terminal task (not just `status: "dispatched"`), and `/procurement-history/[taskId]` backs the task detail page above. `/agents/verify` runs the live ERC-8004 check ahead of a connected wallet's `addAuthorizedAgent()` call; `/procurement-registry/active` tracks which registry deployment the dashboard currently reads/gates against; `/faucet` backs the "Faucet" panel (see `lib/chain/faucet.ts` below). |
 | `app/api/health`, `app/api/providers` | UI-only convenience routes. |
 | `lib/types.ts` | Shared zod schemas + TS types: `ProcurementRequest`, `ProviderOffer`, `ProcurementTask`, `ProcurementReportSchema`, `Policy`. |
 | `lib/lucid/agent.ts` | The remaining Lucid entrypoints: `authenticate`, `discover`, `policy`, `report` (SIWX + on-chain gate), `procurement_status`. |
@@ -208,17 +218,21 @@ proves the platform actually trusts that address to report at all.
 | `lib/lucid/mock-providers.ts`, `lib/lucid/mock-provider-agent.ts` | Unchanged — seed data + tiny real `@lucid-agents/core` runtimes for the discoverable providers. |
 | `lib/lucid/http-bind.ts` | The Next.js <-> `@lucid-agents/http` adapter — architecture-neutral, unchanged. |
 | `lib/keeperhub/policy.ts` | The enterprise's policy — now mutable (`updatePolicy`), seeded from env, edited via `PATCH /api/policy`. `evaluatePolicy` is still exported for the `report` handler to audit against, mirrored in the CLI for the agent's own pre-execution check. |
-| `lib/identity/gate.ts` | **New.** Live ERC-8004 verification of an inbound caller — composes `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient`, since no ready-made "verify this caller" function exists in the SDK. |
-| `lib/identity/register.ts` | **New.** Server-side fallback: mints a new ERC-8004 identity via `IdentityRegistryClient.register()`, signed by `ENTERPRISE_ADMIN_PRIVATE_KEY` — backs the "Authorize Agent (by Registering in the ERC-8004)" panel when no wallet is connected. When an `agentWalletAddress` is supplied, follows up with `IdentityRegistryClient.transfer()` to hand the freshly minted identity to that address, since `register()` itself always mints to whoever signs. |
-| `lib/identity/registerCore.ts` | **New.** The mint+transfer logic itself (isomorphic — no server- or browser-only imports), shared by `register.ts` and `registerBrowser.ts` so the two signing paths can't drift. |
-| `lib/identity/registerBrowser.ts` | **New.** Browser counterpart to `register.ts` — same mint+transfer flow, but signed by whatever wallet the admin connected via "Connect Wallet" (a viem `WalletClient` over `window.ethereum`), so that wallet pays its own gas instead of `ENTERPRISE_ADMIN_PRIVATE_KEY`. Never touches server-only env vars. |
-| `lib/wallet/WalletProvider.tsx` | **New.** React context backing "Connect Wallet": discovers installed extensions via EIP-6963 (`eip6963:requestProvider`/`announceProvider`) and lets the admin explicitly pick **MetaMask** or **Rabby Wallet** rather than fighting over the ambiguous `window.ethereum` global (falls back to best-effort `isMetaMask`/`isRabby` flag sniffing for wallets that haven't adopted EIP-6963 yet). Tracks `accountsChanged`/`chainChanged` on whichever provider was picked, silently restores that choice on reload (remembered in `localStorage`, connection state itself is never persisted), and exposes a "switch to Base Sepolia" helper (`wallet_switchEthereumChain`/`wallet_addEthereumChain`). Wraps the whole page in `app/page.tsx`. |
-| `lib/identity/authorizedAgentsStore.ts` | **New.** In-app display cache of which `agentId` an authorized address verified against, plus its reputation snapshot — the allowlist's source of truth is on-chain (`ProcurementRegistry.authorizedAgents`). |
-| `lib/chain/registry.ts`, `lib/chain/procurementAbi.ts` | **New.** viem clients reading `ProcurementRecorded` logs and (owner-signed) writing the on-chain allowlist. `readProcurementHistory()` paginates `eth_getLogs` in ≤10,000-block chunks over the last `HISTORY_LOOKBACK_BLOCKS` — Base Sepolia's public RPC (`sepolia.base.org`) rejects a single `fromBlock: "earliest"` call outright past that range. |
-| `lib/chain/taskId.ts` | **New.** `randomTaskId()` — mints the bytes32 id `POST /api/procurement-intents` assigns a task, in the exact format `ProcurementRegistry.recordProcurement()` needs on-chain. `agent-skills/scripts/cli/src/orchestrate.ts`'s `procure act` reads this same id out of the webhook payload and reuses it, rather than minting its own — see the "Request lifecycle" section above for why that correlation matters. |
-| `lib/webhooks/subscribers.ts`, `lib/webhooks/dispatch.ts` | **New.** Subscriber registry + per-platform (Hermes/OpenClaw/generic) payload building and HMAC/Bearer signing. |
+| `lib/identity/gate.ts` | Live ERC-8004 verification of an inbound caller — composes `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient`, since no ready-made "verify this caller" function exists in the SDK. |
+| `lib/identity/register.ts` | Server-side fallback: mints a new ERC-8004 identity via `IdentityRegistryClient.register()`, signed by `ENTERPRISE_ADMIN_PRIVATE_KEY` — backs the "Authorize Agent (by Registering in the ERC-8004)" panel when no wallet is connected. When an `agentWalletAddress` is supplied, follows up with `IdentityRegistryClient.transfer()` to hand the freshly minted identity to that address, since `register()` itself always mints to whoever signs. |
+| `lib/identity/registerCore.ts` | The mint+transfer logic itself (isomorphic — no server- or browser-only imports), shared by `register.ts` and `registerBrowser.ts` so the two signing paths can't drift. |
+| `lib/identity/registerBrowser.ts` | Browser counterpart to `register.ts` — same mint+transfer flow, but signed by whatever wallet the admin connected via "Connect Wallet" (a viem `WalletClient` over `window.ethereum`), so that wallet pays its own gas instead of `ENTERPRISE_ADMIN_PRIVATE_KEY`. Never touches server-only env vars. |
+| `lib/wallet/WalletProvider.tsx` | React context backing "Connect Wallet": discovers installed extensions via EIP-6963 (`eip6963:requestProvider`/`announceProvider`) and lets the admin explicitly pick **MetaMask** or **Rabby Wallet** rather than fighting over the ambiguous `window.ethereum` global (falls back to best-effort `isMetaMask`/`isRabby` flag sniffing for wallets that haven't adopted EIP-6963 yet). Tracks `accountsChanged`/`chainChanged` on whichever provider was picked, silently restores that choice on reload (remembered in `localStorage`, connection state itself is never persisted), and exposes a "switch to Base Sepolia" helper (`wallet_switchEthereumChain`/`wallet_addEthereumChain`). Wraps the whole page in `app/page.tsx`. |
+| `lib/identity/authorizedAgentsStore.ts` | In-app display cache of which `agentId` an authorized address verified against, plus its reputation snapshot — the allowlist's source of truth is on-chain (`ProcurementRegistry.authorizedAgents`). |
+| `lib/chain/registry.ts`, `lib/chain/registryBrowser.ts`, `lib/chain/procurementAbi.ts` | viem clients reading `ProcurementRecorded` logs and writing the on-chain allowlist — `registry.ts` for reads, `registryBrowser.ts` for the connected wallet's `addAuthorizedAgent()`/`revokeAuthorizedAgent()` writes (no server-signed path). `readProcurementHistory()` paginates `eth_getLogs` in ≤10,000-block chunks over the last `HISTORY_LOOKBACK_BLOCKS` — Base Sepolia's public RPC (`sepolia.base.org`) rejects a single `fromBlock: "earliest"` call outright past that range. |
+| `lib/chain/activeRegistryStore.ts` | In-memory pointer to whichever `ProcurementRegistry` address is currently "active" — backs `GET`/`POST /api/procurement-registry/active`; see the note below the env var table. |
+| `lib/chain/factoryAbi.ts`, `lib/chain/factoryBrowser.ts` | `ProcurementRegistryFactory`'s ABI and the connected-wallet `createNewProcurementRegistry()` call backing the "New ProcurementRegistry contract creation" panel, plus the read-only `getRegistriesByCreator()` lookup that pre-fills "Your registries." |
+| `lib/chain/taskId.ts` | `randomTaskId()` — mints the bytes32 id `POST /api/procurement-intents` assigns a task, in the exact format `ProcurementRegistry.recordProcurement()` needs on-chain. `agent-skills/scripts/cli/src/orchestrate.ts`'s `procure act` reads this same id out of the webhook payload and reuses it, rather than minting its own — see the "Request lifecycle" section above for why that correlation matters. |
+| `lib/chain/faucet.ts`, `lib/chain/faucetBrowser.ts`, `lib/chain/faucetAbi.ts` | Mints Aave's Base Sepolia test USDC to any address via Aave's own permissionless `Faucet` contract — `faucet.ts` signs with `ENTERPRISE_ADMIN_PRIVATE_KEY` server-side, `faucetBrowser.ts` signs with whichever wallet is connected. Backs `app/api/faucet` and the `/faucet` dashboard page (`app/components/FaucetPanel.tsx`). |
+| `lib/webhooks/subscribers.ts`, `lib/webhooks/dispatch.ts` | Subscriber registry + per-platform (Hermes/OpenClaw/generic) payload building and HMAC/Bearer signing. |
 | `lib/mcp/server.ts` | MCP tools — `get_agent_card`, `discover_providers`, `get_policy`, `get_procurement_status`. `submit_procurement` (execution) is retired. |
 | `lib/store.ts` | Rich-detail rendering cache, keyed by `taskId` — no longer the source of truth for "did this happen" (that's on-chain now); still in-memory/process-local. |
+| `lib/identity/registeredAgentsStore.ts` | Display-friendly log of identities minted via the "Authorize Agent (by Registering in the ERC-8004)" panel — the Identity Registry itself exposes no "list all agents" read, so this is process-local bookkeeping only; the identity's source of truth is the on-chain ERC-721 token. |
 
 **Removed** in this migration (moved to `agent-skills/scripts/cli`, or retired outright since the "app simulates its own caller" pattern is exactly the actor behavior being removed): `lib/keeperhub/client.ts`, `lib/demo/enterprise-signer.ts`, `app/api/demo/authenticate`, `app/api/demo/procure`, `app/api/demo/tasks/[taskId]`.
 
@@ -265,6 +279,8 @@ ERC-8004 gate, on-chain reads, and contract administration.
 | `NEXT_PUBLIC_CHAIN_ID`, `NEXT_PUBLIC_IDENTITY_REGISTRY_ADDRESS` | `lib/identity/registerBrowser.ts` (client-side, via "Connect Wallet") | unset -> Base Sepolia + `@lucid-agents/identity`'s default registry address | Client-side mirrors of `CHAIN_ID`/`IDENTITY_REGISTRY_ADDRESS`, only needed to target a non-default deployment. Next.js inlines `NEXT_PUBLIC_*` vars into the browser bundle at build time — never put a secret in one. |
 | `AGENT_MCP_API_KEY` | `app/api/agent/mcp` | unset | If set, MCP requests must send `Authorization: Bearer <key>`. |
 | `NEXT_PUBLIC_PROCUREMENT_REGISTRY_FACTORY_ADDRESS` | `lib/chain/factoryBrowser.ts` (client-side, via "Connect Wallet") | unset -> the "New ProcurementRegistry contract creation" panel is disabled | The deployed `ProcurementRegistryFactory` address (see `../contracts/README.md`). Always signed by the connected wallet — no server-side fallback, since `createNewProcurementRegistry()` makes the signer the new registry's owner. Also used read-only (no signature needed) to populate the "Authorized agents" panel's **Target ProcurementRegistry** field straight from the factory's own `getRegistriesByCreator(connectedWallet)` storage — see the note below the table. |
+| `FAUCET_CONTRACT_ADDRESS`, `FAUCET_USDC_ADDRESS` | `lib/chain/faucet.ts` (server-signed "Faucet" panel) | Aave's real Base Sepolia `Faucet`/test-USDC addresses (see `agent-demo/README.md#base-sepolia-token-addresses--faucets`) | Only override if Aave's Base Sepolia deployment changes. |
+| `NEXT_PUBLIC_FAUCET_CONTRACT_ADDRESS`, `NEXT_PUBLIC_FAUCET_USDC_ADDRESS` | `lib/chain/faucetBrowser.ts` (connected-wallet "Faucet" panel) | same as above | Client-side mirrors, inlined into the browser bundle at build time. |
 | `POLICY_MAX_USD_PER_TASK` | `lib/keeperhub/policy.ts` | `1000000` | Seed default only — overwritten in-process by `PATCH /api/policy`. |
 | `POLICY_MIN_APY_BPS` | `lib/keeperhub/policy.ts` | `400` (4.00%) | Same. |
 | `POLICY_ALLOWED_ASSETS` | `lib/keeperhub/policy.ts` | `USDC` | Comma-separated seed default. |
@@ -334,3 +350,8 @@ signature alone satisfies — the address must have been explicitly
 authorized first, by the registry-owning wallet connected in the "Authorized
 agents" panel (`POST /api/agents/verify` + `addAuthorizedAgent()` via
 `lib/chain/registryBrowser.ts`).
+
+## DEMO Video
+
+- Demonstrate the interaction between the Demo Agent (`./agent-demo`) and Web App (`./app`):    
+  https://youtu.be/ZZuMhfOZRqs?si=etQZqzL-GYKBkl2P
