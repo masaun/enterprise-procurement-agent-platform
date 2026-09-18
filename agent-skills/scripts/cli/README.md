@@ -252,7 +252,7 @@ disk (`baseUrl`, `privateKey`, `mcpApiKey`, `keeperHubApiKey`,
   step paired with its natural-language phrasing (for a human prompting
   through a messaging gateway like Telegram) and its `procure` command.
 - [`../../references/protocols.md`](../../references/protocols.md) — exact
-  SIWX wire format, ERC-8004 gate mechanics, KeeperHub's guarded execution,
+  SIWX wire format, [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) gate mechanics, KeeperHub's guarded execution,
   and each webhook platform's exact signature scheme.
 - [`../../references/api-reference.md`](../../references/api-reference.md) —
   every HTTP entrypoint, request/response shapes, error modes.

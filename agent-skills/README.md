@@ -58,7 +58,7 @@ needed (expensive, on demand). This package follows that shape exactly:
 | --- | --- | --- |
 | `SKILL.md` frontmatter (`name`, `description`) | Always, at agent startup | ~100 tokens: what this skill is for and when to use it. |
 | `SKILL.md` body | Once a webhook (or a human's natural-language request) matches | The step-by-step procedure: receive intent -> discover -> read policy -> evaluate -> execute -> record on-chain -> report -> poll. |
-| `references/protocols.md` | Implementing SIWX/A2A/ERC-8004/AP2/KeeperHub/webhook-signing by hand | Wire formats, captured from this app's and each webhook platform's real behavior. |
+| `references/protocols.md` | Implementing SIWX/A2A/[ERC-8004](https://github.com/erc-8004/erc-8004-contracts)/AP2/KeeperHub/webhook-signing by hand | Wire formats, captured from this app's and each webhook platform's real behavior. |
 | `references/api-reference.md` | Calling the HTTP surface | Every entrypoint, request/response shapes. |
 | `references/mcp-tools.md` | Using an MCP client | Tool list (read-only), schemas, the MCP trust-boundary note. |
 | `references/examples.md` | Wanting a worked transcript | Real accepted/rejected/webhook-triggered runs. |
@@ -87,12 +87,12 @@ sequenceDiagram
 | Step | How | Auth / credentials | Purpose |
 | --- | --- | --- | --- |
 | Receive the intent | A webhook POST from `./app` (Hermes route / OpenClaw plugin / generic) | Platform-specific signature (HMAC or Bearer) — verify it before acting | This is the trigger. No polling. |
-| Discover this agent | `GET /api/agent/.well-known/agent-card.json` | none | A2A Agent Card, ERC-8004 trust metadata, AP2 role. |
+| Discover this agent | `GET /api/agent/.well-known/agent-card.json` | none | A2A Agent Card, [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) trust metadata, AP2 role. |
 | Discover providers (read) | `POST /api/agent/entrypoints/discover/invoke` | none | Platform-hosted market data — who's available to buy from. |
 | Read policy | `POST /api/agent/entrypoints/policy/invoke` | none | The enterprise's current, admin-set policy. |
 | **Evaluate + execute** | Local, in `procure submit`/`act` | This agent's own `PROCURE_KEEPERHUB_API_KEY` | `evaluatePolicy()` picks the best eligible offer; `DirectExecutor.checkAndExecute()` runs the guarded on-chain call. **`./app` never sees these credentials or this call.** |
 | **Record on-chain** | `ProcurementRegistry.recordProcurement(...)` | This agent's own `PROCURE_PRIVATE_KEY`, and the address must already be on the contract's `authorizedAgents` allowlist | The durable receipt. Reverts if this agent hasn't been authorized yet (see below). |
-| **Report** | `POST /api/agent/entrypoints/report/invoke` | SIWX (same `PROCURE_PRIVATE_KEY`) + the platform's live on-chain ERC-8004 gate | Files the rich detail (timeline, policy evaluation) for the dashboard, keyed by the same `taskId` as the on-chain receipt. |
+| **Report** | `POST /api/agent/entrypoints/report/invoke` | SIWX (same `PROCURE_PRIVATE_KEY`) + the platform's live on-chain [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) gate | Files the rich detail (timeline, policy evaluation) for the dashboard, keyed by the same `taskId` as the on-chain receipt. |
 | Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id. |
 
 **That `taskId` is the same one `./app` assigned when it dispatched the
@@ -108,7 +108,7 @@ uncorrelated task.
 **Before any of this works, the enterprise admin must authorize this
 agent's wallet** via the dashboard's "Authorized agents" panel, with a
 wallet connected there (it must be the target registry's owner). The panel
-runs a live ERC-8004 verification (`POST /api/agents/verify`) — this
+runs a live [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) verification (`POST /api/agents/verify`) — this
 agent's `agentId` must resolve, on-chain, to this agent's wallet address —
 then the connected wallet itself signs `addAuthorizedAgent()` on that
 registry. Make sure this agent's `PROCURE_REGISTRY_ADDRESS` matches that

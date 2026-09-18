@@ -6,7 +6,7 @@ A standalone [Foundry](https://book.getfoundry.sh/) project — separate from `.
 
 `ProcurementRegistry.sol` is the durable, on-chain source of truth for the platform's activity/receipt dashboard (see [`../README.md`](../README.md) for the full architecture). Two roles:
 
-- **Owner** (`Ownable`) — whichever wallet deployed/created the registry. Administers `authorizedAgents` via `addAuthorizedAgent`/`revokeAuthorizedAgent`, populated only after `./app`'s own live ERC-8004 identity/reputation check passes for an external agent's wallet. The contract deliberately doesn't encode the ERC-8004 registries' own ABI — that verification happens off-chain in `app/lib/identity/gate.ts`, and the result is what gets written here. `./app` itself holds no owner key of any kind — see the factory paragraph below.
+- **Owner** (`Ownable`) — whichever wallet deployed/created the registry. Administers `authorizedAgents` via `addAuthorizedAgent`/`revokeAuthorizedAgent`, populated only after `./app`'s own live [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) identity/reputation check passes for an external agent's wallet. The contract deliberately doesn't encode the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) registries' own ABI — that verification happens off-chain in `app/lib/identity/gate.ts`, and the result is what gets written here. `./app` itself holds no owner key of any kind — see the factory paragraph below.
 - **Authorized agent** — an external agent's own treasury wallet (Hermes/OpenClaw, via the `agent-skills` CLI). Calls `recordProcurement(...)` itself, with its own key, after executing a procurement via KeeperHub. The contract trusts `msg.sender` as the agent address; it doesn't custody funds or execute anything.
 
 `recordProcurement` rejects a duplicate `taskId` and emits `ProcurementRecorded` with every field `./app`'s dashboard needs to render history straight from logs (`app/lib/chain/registry.ts` reads these via a viem public client, against whichever registry the dashboard most recently marked "active" — see `app/lib/chain/activeRegistryStore.ts`).
@@ -18,6 +18,7 @@ A standalone [Foundry](https://book.getfoundry.sh/) project — separate from `.
 | Contract | Address (Base Sepolia) |
 | --- | --- |
 | [`ProcurementRegistryFactory.sol`](./src/ProcurementRegistryFactory.sol) | [`0x37B32265AdD721156dA8F6192a619FBCaD4522e3`](https://sepolia.basescan.org/address/0x37b32265add721156da8f6192a619fbcad4522e3#code) |
+| [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) `IdentityRegistry` (official deployment, not this repo's own) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.basescan.org/address/0x8004a818bfb912233c491871b3d84c89a494bd9e#code) |
 
 `ProcurementRegistry.sol` itself has no single canonical deployment anymore — every enterprise admin creates and owns their own instance via the factory above (`createNewProcurementRegistry()`), so there's no one fixed address to list here. (An earlier standalone deployment, [`0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623`](https://sepolia.basescan.org/address/0xdf33fdf3360fcf1923abb8c7e3ce3c51160c7623#code), predates the factory and is no longer what `./app` points at by default.)
 
