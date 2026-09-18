@@ -15,7 +15,7 @@ procurement.
 
 Looking for a runnable example of "an external agent that reads this
 skill"? [`../agent-demo`](../agent-demo/README.md) is exactly that: an
-LLM-driven agent (via OpenRouter) that plays the same actor/role as a real
+LLM-driven agent (via [OpenRouter](https://openrouter.ai/docs/quickstart)) that plays the same actor/role as a real
 Hermes Agent or OpenClaw install — it loads only this file's `name` +
 `description` at startup, reads the full body below once a task matches,
 pulls in `references/*.md` on demand, and drives the CLI below to act.

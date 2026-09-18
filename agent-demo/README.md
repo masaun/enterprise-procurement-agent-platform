@@ -11,7 +11,7 @@ special, hard-coded knowledge of this platform. At startup it only loads
 `./agent-skills/SKILL.md`'s `name` + `description`, exactly like a real
 skills-compatible runtime would; once a task (a webhook, or a human's
 natural-language ask) matches, it reads the full `SKILL.md` body itself, an
-LLM (reached over **OpenRouter** — <https://openrouter.ai/docs/quickstart>)
+LLM (reached over **[OpenRouter](https://openrouter.ai/docs/quickstart)** — <https://openrouter.ai/docs/quickstart>)
 decides what to do, and it reads `references/*.md` on demand and shells out
 to the bundled `procure` CLI to actually act — the same "fastest path" the
 skill itself documents. `./agent-skills` and `./app` don't know or care that
@@ -62,7 +62,7 @@ parse a human's plain-English ask ("Move 2 USDC... only if APY > 1%") into
 the right flags, and read the right reference doc on demand instead of
 having every protocol detail hard-coded. That reasoning is what a real
 Hermes Agent or OpenClaw install brings via its own LLM — this package
-brings the same thing via OpenRouter, so the demo shows an agent *deciding*
+brings the same thing via [OpenRouter](https://openrouter.ai/docs/quickstart), so the demo shows an agent *deciding*
 to run `procure`, not a script that always does.
 
 ## Install
@@ -142,8 +142,8 @@ skipped, per `agent-skills/README.md`.)
    body once a trigger arrives, and `references/*.md` files only when the
    LLM asks for them via a tool call. Nothing about `./agent-skills`' actual
    content is hard-coded into this package's prompts.
-2. **The LLM decides, via OpenRouter.** `src/openrouter.ts` is a ~50-line
-   client for OpenRouter's OpenAI-compatible `/chat/completions` endpoint
+2. **The LLM decides, via [OpenRouter](https://openrouter.ai/docs/quickstart).** `src/openrouter.ts` is a ~50-line
+   client for [OpenRouter](https://openrouter.ai/docs/quickstart)'s OpenAI-compatible `/chat/completions` endpoint
    (tool calling included) — no vendor SDK, matching this repo's
    dependency-light CLI style. `src/agent.ts` runs the tool-calling loop:
    system prompt (persona + the full `SKILL.md` body) -> user message
@@ -182,9 +182,9 @@ agent runtime you're demoing against.
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Required. From <https://openrouter.ai/keys>. | — |
-| `OPENROUTER_MODEL` | Any model slug OpenRouter routes to (e.g. `openai/gpt-4o-mini`, `anthropic/claude-3.7-sonnet`). | `openai/gpt-4o-mini` |
-| `OPENROUTER_BASE_URL` | OpenRouter API base URL. | `https://openrouter.ai/api/v1` |
-| `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | Sent as `HTTP-Referer` / `X-Title` — OpenRouter uses these for dashboard attribution/rankings. | `http://localhost:3000` / `agent-demo` |
+| `OPENROUTER_MODEL` | Any model slug [OpenRouter](https://openrouter.ai/docs/quickstart) routes to (e.g. `openai/gpt-4o-mini`, `anthropic/claude-3.7-sonnet`). | `openai/gpt-4o-mini` |
+| `OPENROUTER_BASE_URL` | [OpenRouter](https://openrouter.ai/docs/quickstart) API base URL. | `https://openrouter.ai/api/v1` |
+| `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | Sent as `HTTP-Referer` / `X-Title` — [OpenRouter](https://openrouter.ai/docs/quickstart) uses these for dashboard attribution/rankings. | `http://localhost:3000` / `agent-demo` |
 | `AGENT_DEMO_PERSONA` | `hermes` \| `openclaw` \| `generic` — which real agent runtime this run role-plays as. | `generic` |
 | `AGENT_DEMO_NAME` | Display name used in the system prompt. | `Demo External Agent` |
 | `AGENT_DEMO_MAX_TOOL_ITERATIONS` | Safety cap on the tool-calling loop. | `12` |
@@ -302,7 +302,7 @@ sequenceDiagram
 The response the dashboard sees is a `202 Accepted` sent back immediately on
 receipt — `dispatchToSubscriber` (`app/lib/webhooks/dispatch.ts`) only checks
 that the POST succeeded, it doesn't wait for the agent's reasoning loop to
-finish, since that (OpenRouter turns + shelling out to `procure`) can run
+finish, since that ([OpenRouter](https://openrouter.ai/docs/quickstart) turns + shelling out to `procure`) can run
 well past a typical webhook timeout. The actual outcome shows up as a
 `ProcurementRegistry` receipt on `./app`'s "Activity & receipts" panel once
 `run_procure act` completes, same as the manual `webhook` command.
@@ -717,7 +717,7 @@ Faucet.mint(
 | | `agent-skills/scripts/cli` (`procure`) | `agent-demo` (this package) |
 | --- | --- | --- |
 | Role | The actor's mechanical implementation — discovery read, policy evaluation, KeeperHub execution, on-chain write, reporting. | The actor's *decision layer* — what a real Hermes Agent/OpenClaw install supplies around that mechanism. |
-| Driven by | CLI flags / a webhook JSON file, deterministically. | An LLM (via OpenRouter), reasoning over `agent-skills/SKILL.md` at runtime. |
+| Driven by | CLI flags / a webhook JSON file, deterministically. | An LLM (via [OpenRouter](https://openrouter.ai/docs/quickstart)), reasoning over `agent-skills/SKILL.md` at runtime. |
 | Knows about `./agent-skills`' content? | No — it's the thing the skill *describes*, not a reader of the skill file. | Yes — reads `SKILL.md` + `references/*.md` itself, live, the same way a real agent would. |
 | Used by | Both `agent-demo`'s `run_procure` tool, and directly by any human/automation (see `agent-skills/README.md`). | — |
 

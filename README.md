@@ -86,7 +86,7 @@ flowchart TB
 `External` above is deliberately generic — it's whichever agent runtime the
 enterprise admin registered a webhook route for. `./agent-demo` is this
 repo's own concrete implementation of that box: it reads `./agent-skills`
-itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
+itself, reasons over an LLM via [OpenRouter](https://openrouter.ai/docs/quickstart), and drives the `CLI` node above
 (`procure`) — see [`agent-demo/README.md`](agent-demo/README.md).
 
 
@@ -241,7 +241,7 @@ Each project's env vars are documented in full where they're consumed:
 | --- | --- | --- |
 | `./app` | Platform identity, the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) gate, on-chain reads, contract/registry administration, the test-USDC faucet | [`app/README.md#environment-variables`](app/README.md#environment-variables) |
 | `agent-skills/scripts/cli` (`procure`) | The actor's own signing key, KeeperHub org credentials, the registry it writes receipts to | [`agent-skills/README.md#environment-variables`](agent-skills/README.md#environment-variables) |
-| `agent-demo` | Its OpenRouter LLM client, plus every `PROCURE_*` var passed straight through to the shelled-out CLI | [`agent-demo/README.md#environment-variables`](agent-demo/README.md#environment-variables) |
+| `agent-demo` | Its [OpenRouter](https://openrouter.ai/docs/quickstart) LLM client, plus every `PROCURE_*` var passed straight through to the shelled-out CLI | [`agent-demo/README.md#environment-variables`](agent-demo/README.md#environment-variables) |
 | `./contracts` | Deploy-only: `DEPLOYER_PRIVATE_KEY`, `BASE_SEPOLIA_RPC_URL`, `BASESCAN_API_KEY` | [`contracts/README.md`](contracts/README.md#deploy-to-base-sepolia) |
 
 ## Further reading
@@ -250,7 +250,7 @@ Each project's env vars are documented in full where they're consumed:
 - [`contracts/README.md`](contracts/README.md) — `ProcurementRegistry.sol`, build/test/deploy.
 - [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to act on a dispatched webhook.
 - [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to (where one exists).
-- [`agent-demo/README.md`](agent-demo/README.md) — the LLM-driven demo external agent (via OpenRouter) that reads `./agent-skills` itself and drives `procure`, standing in for a real Hermes Agent/OpenClaw install.
+- [`agent-demo/README.md`](agent-demo/README.md) — the LLM-driven demo external agent (via [OpenRouter](https://openrouter.ai/docs/quickstart)) that reads `./agent-skills` itself and drives `procure`, standing in for a real Hermes Agent/OpenClaw install.
 
 ## References
 
