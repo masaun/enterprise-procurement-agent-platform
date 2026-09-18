@@ -23,7 +23,8 @@ LLM-driven example of that external agent.
 ```mermaid
 flowchart LR
     subgraph Browser["Browser (app/page.tsx)"]
-        UI["ProcurementConsole\nclient component"]
+        UI["ProcurementConsole\nclient component\npolls History every 5s"]
+        TaskPage["/tasks/[taskId] page\n(server component)"]
     end
 
     subgraph PlatformAPI["app/api — platform actions (admin-only)"]
@@ -32,6 +33,7 @@ flowchart LR
         Policy["/policy (GET/PATCH)"]
         Intents["/procurement-intents (POST)"]
         History["/procurement-history (GET)"]
+        HistoryOne["/procurement-history/[taskId] (GET)"]
         Webhooks["/webhooks/subscribers (CRUD)"]
         IdentityReg["/agents/identity (POST)"]
         Agents["/agents/authorized (CRUD)"]
@@ -71,6 +73,7 @@ flowchart LR
     UI --> Intents --> Dispatch
     UI --> Providers --> Orchestrate
     UI --> History --> Registry
+    UI -->|"'view' link"| TaskPage --> HistoryOne --> Registry
     UI --> Webhooks --> Subs
     UI --> IdentityReg --> Register
     UI --> Agents --> GateTs
@@ -98,10 +101,12 @@ sequenceDiagram
     participant C as ProcurementRegistry (Base Sepolia)
 
     H->>P: PATCH /api/policy
+    H->>P: click "Dispatch to subscribed agents" (button disables + spinner)
     H->>P: POST /api/procurement-intents { instruction, asset, amount, minApyBps }
-    P->>P: save pending task (status "dispatched")
-    P->>W: signed webhook POST (platform-specific payload)
-    W->>A: agent acts on the rendered intent
+    P->>P: mint a bytes32 taskId (lib/chain/taskId.ts), save pending task (status "dispatched")
+    P->>W: signed webhook POST { taskId, ...payload }
+    P-->>H: dispatch summary — button re-enables; new row appears in "Activity & receipts"
+    W->>A: agent acts on the rendered intent (same taskId)
     A->>P: POST /api/agent/entrypoints/discover/invoke
     loop for each known provider
         P->>M: GET .well-known/agent-card.json + POST entrypoints/quote/invoke
@@ -112,14 +117,57 @@ sequenceDiagram
     A->>A: evaluatePolicy() locally, pick best eligible offer
     A->>K: checkAndExecute({ read: rateContract, condition: gte minApy, write: supply() })
     K-->>A: { executed, condition, transactionHash }
-    A->>C: recordProcurement(taskId, enterprise, status, ...) — agent's own wallet
-    A->>P: POST /api/agent/entrypoints/report/invoke (SIWX-signed)
+    A->>C: recordProcurement(taskId, enterprise, status, ...) — same taskId, agent's own wallet
+    A->>P: POST /api/agent/entrypoints/report/invoke (SIWX-signed, same taskId)
     P->>P: isAgentAuthorizedOnChain(auth.address) — reject if not on the allowlist
-    P->>P: save rich task detail keyed by taskId
-    H->>P: dashboard polls /api/procurement-history
-    P->>C: read ProcurementRecorded logs
-    P-->>H: merged on-chain receipt + off-chain detail
+    P->>P: save rich task detail keyed by taskId — overwrites the same pending row
+    loop every 5s while any task is non-terminal
+        H->>P: GET /api/procurement-history
+        P->>C: read ProcurementRecorded logs (paginated, ≤10k blocks/call)
+        P-->>H: pending tasks (by status) + merged on-chain + off-chain-only receipts
+    end
+    H->>P: click "view" on a row -> GET /tasks/[taskId]
+    P->>P: GET /api/procurement-history/[taskId]
+    P-->>H: full order detail (request, provider, policy, execution, receipt, timeline)
 ```
+
+`GET /api/procurement-history` returns every task not yet in a terminal
+status (`completed`/`rejected`/`failed`) as a pending row, labeled by
+whichever status it last reported — `dispatched`, `authenticating`,
+`discovering`, `evaluating_policy`, or `executing` (see
+`ProcurementReportSchema`'s status enum in `lib/types.ts`) — alongside every
+on-chain receipt. In practice today, `agent-skills/scripts/cli`'s
+`orchestrate.ts` only calls `report` once, at the very end, with the final
+status — so a pending row currently just reads "dispatched, awaiting agent"
+for its whole time in flight, then resolves straight to a receipt row. The
+finer statuses render correctly the moment an agent (this CLI or a real
+Hermes Agent/OpenClaw integration) starts reporting progress mid-run
+instead; no dashboard change would be needed.
+
+Two things have to line up for that resolution to actually happen, both
+fixed in this route and `lib/chain/taskId.ts`/`agent-skills/scripts/cli/src/orchestrate.ts`:
+
+1. **The taskId has to round-trip.** `POST /api/procurement-intents` used
+   to mint a UUID for its own bookkeeping; `procure act` always minted a
+   *different*, unrelated bytes32 id for its on-chain receipt and report,
+   because the platform's id wasn't in the bytes32 shape the contract needs.
+   The dispatched row's status then never changed — the agent's completion
+   report landed as a brand-new, uncorrelated task the dashboard had never
+   seen, not as an update to the row it was already showing. Fixed by
+   generating a bytes32 taskId up front (`lib/chain/taskId.ts`) and having
+   `procure act` adopt it (from the webhook payload) instead of minting its
+   own — see `agent-skills/README.md`'s note on this.
+2. **A terminal task still needs to render even with no on-chain receipt.**
+   The common case: the reporting agent has no `PROCURE_REGISTRY_ADDRESS`
+   configured, so it logs "skipping on-chain receipt write" and reports
+   anyway. A task in that state is terminal (excluded from "pending") but
+   has no on-chain `ProcurementRecorded` log (excluded from "receipts" if
+   that were sourced from the chain alone) — without the fallback below it
+   would simply vanish from the table. `GET /api/procurement-history`
+   handles this by shaping any terminal task with no matching on-chain
+   receipt into the same row shape a real receipt uses (`offChainReceipt()`
+   in that route), sourced entirely from the off-chain report — same
+   Status/Details columns, just no `tx` link since none exists.
 
 ## Interaction model
 
@@ -132,7 +180,9 @@ sequenceDiagram
 | **Report** | `POST /api/agent/entrypoints/report/invoke` | SIWX **+ on-chain ERC-8004 allowlist** (`isAgentAuthorizedOnChain`) | Replaces the old `procure` entrypoint. The external agent already discovered, evaluated, executed, and recorded on-chain itself — this just files the rich detail for the dashboard, and is rejected outright if the caller's address isn't on `ProcurementRegistry`'s allowlist. |
 | Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported `ProcurementTask` by id (`lib/store.ts`). |
 | Set policy (admin) | `PATCH /api/policy` | admin-only, not agent-facing | The dashboard's editable policy form. |
-| Describe intent (admin) | `POST /api/procurement-intents` | admin-only, not agent-facing | Records a pending intent and dispatches it as a webhook. **No execution happens here or anywhere in this app.** |
+| Describe intent (admin) | `POST /api/procurement-intents` | admin-only, not agent-facing | Records a pending intent and dispatches it as a webhook. **No execution happens here or anywhere in this app.** The dashboard's dispatch button disables and shows a spinner for the duration of this call. |
+| View activity (admin) | `GET /api/procurement-history` | admin-only, not agent-facing | Every non-terminal task (by its last-reported status) plus every on-chain receipt — polled by the dashboard every 5s so "Activity & receipts" tracks progress without a reload. |
+| View one order (admin) | `GET /api/procurement-history/[taskId]` | admin-only, not agent-facing | Backs `/tasks/[taskId]`, the "view" link on each "Activity & receipts" row — the same merge as above, narrowed to one task. |
 | Register an ERC-8004 identity (admin) | `POST /api/agents/identity` | admin-only, not agent-facing | Mints a new ERC-8004 identity (`lib/identity/register.ts`), signed by `ENTERPRISE_ADMIN_PRIVATE_KEY`. Accepts an optional `agentWalletAddress`; when given, the minted identity is transferred to that address on-chain so it ends up owned by the agent wallet the admin names, not the signer. Only used when the admin hasn't connected a wallet via "Connect Wallet" — when one is connected, the panel signs and pays gas with it directly in the browser instead (`lib/identity/registerBrowser.ts`), and this route is bypassed entirely. A prerequisite for the row below — do this once per agent wallet first. |
 | Authorize an agent (admin) | `POST /api/agents/verify` + connected-wallet `addAuthorizedAgent()` | admin-only, not agent-facing; requires a connected wallet | Runs the live ERC-8004 verify (`lib/identity/gate.ts`); on success, the connected wallet (the target registry's owner) signs `ProcurementRegistry.addAuthorizedAgent()` itself (`lib/chain/registryBrowser.ts`) — no server-signed fallback. `POST /api/agents/authorized/record` then records the effect for the dashboard's list. |
 
@@ -145,11 +195,12 @@ proves the platform actually trusts that address to report at all.
 
 | Path | Responsibility |
 | --- | --- |
-| `app/page.tsx`, `app/components/*` | Dashboard UI: editable policy form, procurement-intent form, webhook subscriber CRUD, authorized-agent CRUD, on-chain activity/receipt list, "Connect Wallet" (`app/components/ConnectWalletButton.tsx` — a picker between MetaMask and Rabby Wallet, backed by `lib/wallet/WalletProvider.tsx`). |
+| `app/page.tsx`, `app/components/*` | Dashboard UI: editable policy form, procurement-intent form (dispatch button disables + spinners while the `POST` is in flight), webhook subscriber CRUD, authorized-agent CRUD, the "Activity & receipts" table — one row per task, live-polled (`GET /api/procurement-history` every 5s) so its Status column tracks a subscribed agent from `dispatched` through the on-chain receipt without a manual reload — "Connect Wallet" (`app/components/ConnectWalletButton.tsx` — a picker between MetaMask and Rabby Wallet, backed by `lib/wallet/WalletProvider.tsx`). |
+| `app/tasks/[taskId]/page.tsx` | **New.** The "Activity & receipts" table's per-row "view" link — a permalink with the full order detail (request, selected provider, policy evaluation, KeeperHub execution, on-chain receipt, timeline) for one task. Fetches `GET /api/procurement-history/[taskId]` rather than importing `lib/store.ts`/`lib/chain/registry.ts` directly (Next.js dev/Turbopack doesn't reliably share that module-level state between a Page's and a Route Handler's compiled module graph). |
 | `app/api/agent/[...lucid]/route.ts` | Binds the real `@lucid-agents/http` route plan (`runtime.http.routes`) straight into Next.js — see `lib/lucid/http-bind.ts`. |
 | `app/api/agent/mcp/route.ts` | MCP endpoint: `McpServer` + `WebStandardStreamableHTTPServerTransport`, stateless, read-only tools only. |
 | `app/api/mock-providers/[providerId]/[...lucid]/route.ts` | Same binding pattern, for each mock provider's own tiny `@lucid-agents/core` runtime — unchanged; these are market data, not actor logic. |
-| `app/api/policy`, `app/api/procurement-intents`, `app/api/procurement-history`, `app/api/webhooks/subscribers[/:id]`, `app/api/agents/identity`, `app/api/agents/authorized[/:address]` | The platform's own admin API — not part of the agent-facing contract (see `agent-skills/references/api-reference.md`). |
+| `app/api/policy`, `app/api/procurement-intents`, `app/api/procurement-history[/:taskId]`, `app/api/webhooks/subscribers[/:id]`, `app/api/agents/identity`, `app/api/agents/authorized[/:address]` | The platform's own admin API — not part of the agent-facing contract (see `agent-skills/references/api-reference.md`). `/procurement-history` now returns every non-terminal task (not just `status: "dispatched"`), and `/procurement-history/[taskId]` (**new**) backs the task detail page above. |
 | `app/api/health`, `app/api/providers` | UI-only convenience routes. |
 | `lib/types.ts` | Shared zod schemas + TS types: `ProcurementRequest`, `ProviderOffer`, `ProcurementTask`, `ProcurementReportSchema`, `Policy`. |
 | `lib/lucid/agent.ts` | The remaining Lucid entrypoints: `authenticate`, `discover`, `policy`, `report` (SIWX + on-chain gate), `procurement_status`. |
@@ -163,7 +214,8 @@ proves the platform actually trusts that address to report at all.
 | `lib/identity/registerBrowser.ts` | **New.** Browser counterpart to `register.ts` — same mint+transfer flow, but signed by whatever wallet the admin connected via "Connect Wallet" (a viem `WalletClient` over `window.ethereum`), so that wallet pays its own gas instead of `ENTERPRISE_ADMIN_PRIVATE_KEY`. Never touches server-only env vars. |
 | `lib/wallet/WalletProvider.tsx` | **New.** React context backing "Connect Wallet": discovers installed extensions via EIP-6963 (`eip6963:requestProvider`/`announceProvider`) and lets the admin explicitly pick **MetaMask** or **Rabby Wallet** rather than fighting over the ambiguous `window.ethereum` global (falls back to best-effort `isMetaMask`/`isRabby` flag sniffing for wallets that haven't adopted EIP-6963 yet). Tracks `accountsChanged`/`chainChanged` on whichever provider was picked, silently restores that choice on reload (remembered in `localStorage`, connection state itself is never persisted), and exposes a "switch to Base Sepolia" helper (`wallet_switchEthereumChain`/`wallet_addEthereumChain`). Wraps the whole page in `app/page.tsx`. |
 | `lib/identity/authorizedAgentsStore.ts` | **New.** In-app display cache of which `agentId` an authorized address verified against, plus its reputation snapshot — the allowlist's source of truth is on-chain (`ProcurementRegistry.authorizedAgents`). |
-| `lib/chain/registry.ts`, `lib/chain/procurementAbi.ts` | **New.** viem clients reading `ProcurementRecorded` logs and (owner-signed) writing the on-chain allowlist. |
+| `lib/chain/registry.ts`, `lib/chain/procurementAbi.ts` | **New.** viem clients reading `ProcurementRecorded` logs and (owner-signed) writing the on-chain allowlist. `readProcurementHistory()` paginates `eth_getLogs` in ≤10,000-block chunks over the last `HISTORY_LOOKBACK_BLOCKS` — Base Sepolia's public RPC (`sepolia.base.org`) rejects a single `fromBlock: "earliest"` call outright past that range. |
+| `lib/chain/taskId.ts` | **New.** `randomTaskId()` — mints the bytes32 id `POST /api/procurement-intents` assigns a task, in the exact format `ProcurementRegistry.recordProcurement()` needs on-chain. `agent-skills/scripts/cli/src/orchestrate.ts`'s `procure act` reads this same id out of the webhook payload and reuses it, rather than minting its own — see the "Request lifecycle" section above for why that correlation matters. |
 | `lib/webhooks/subscribers.ts`, `lib/webhooks/dispatch.ts` | **New.** Subscriber registry + per-platform (Hermes/OpenClaw/generic) payload building and HMAC/Bearer signing. |
 | `lib/mcp/server.ts` | MCP tools — `get_agent_card`, `discover_providers`, `get_policy`, `get_procurement_status`. `submit_procurement` (execution) is retired. |
 | `lib/store.ts` | Rich-detail rendering cache, keyed by `taskId` — no longer the source of truth for "did this happen" (that's on-chain now); still in-memory/process-local. |

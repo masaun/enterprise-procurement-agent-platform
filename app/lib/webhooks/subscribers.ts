@@ -49,8 +49,16 @@ export function listActiveSubscribers(): WebhookSubscriber[] {
   return listSubscribers().filter((s) => s.active);
 }
 
-/** Redacts the secret for any response that leaves the server. */
-export function toPublicSubscriber(subscriber: WebhookSubscriber): Omit<WebhookSubscriber, "secret"> & { secret: "(set)" } {
-  const { secret: _secret, ...rest } = subscriber;
-  return { ...rest, secret: "(set)" };
+/**
+ * Deliberately does NOT redact `secret`. This is a single-admin, unauthenticated
+ * local demo API (no login, no other viewers) already returning the editable
+ * webhook URL and platform in this same response — redacting only the secret
+ * bought no real security boundary, and cost real debugging time: an admin
+ * who mis-typed or autofilled a mismatched secret while adding a subscriber
+ * had no way to see that from the dashboard, only a cryptic "signature
+ * verification failed" on the receiving agent's own terminal. Showing it
+ * here lets a mismatch be caught by eye instead.
+ */
+export function toPublicSubscriber(subscriber: WebhookSubscriber): WebhookSubscriber {
+  return subscriber;
 }

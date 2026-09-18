@@ -111,7 +111,7 @@ Each enterprise admin creates and owns their own `ProcurementRegistry.sol` insta
 | A2A discovery + invocation (Agent Cards, `quote` skill calls) | **Real.** `@lucid-agents/a2a`, against three small real agent runtimes `./app` hosts. |
 | ERC-8004 inbound gate | **Real, live on-chain verification.** `app/lib/identity/gate.ts` calls `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient` against Base Sepolia — not a static allowlist. |
 | ERC-8004 identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`app/lib/identity/register.ts`) mints a real identity on the official ERC-8004 Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. The admin enters the target **Agent Wallet Address**; the mint is then transferred to that address on-chain, so no private key for the agent wallet ever passes through this app. If the admin uses "Connect Wallet" (top of the dashboard) to pick **MetaMask** or **Rabby Wallet** — detected via EIP-6963, see `app/lib/wallet/WalletProvider.tsx` — that wallet signs and pays gas for this directly (`app/lib/identity/registerBrowser.ts`); otherwise it falls back to the platform's `ENTERPRISE_ADMIN_PRIVATE_KEY` signing server-side. |
-| On-chain activity history | **Real.** `ProcurementRegistry.sol` (`./contracts`), deployed to Base Sepolia; the dashboard reads `ProcurementRecorded` events directly via viem. |
+| On-chain activity history | **Real.** `ProcurementRegistry.sol` (`./contracts`), deployed to Base Sepolia; the dashboard reads `ProcurementRecorded` events directly via viem (paginated in ≤10,000-block chunks — Base Sepolia's public RPC rejects a single from-genesis call), polling every 5s so the "Activity & receipts" table's Status column tracks a task from dispatch through its on-chain receipt without a reload, with a permalink (`/tasks/[taskId]`) for each row's full detail. |
 | AP2 commerce-role mandate | **Real.** `@lucid-agents/ap2` — `shopper` (the external agent) / `merchant` (each provider). |
 | KeeperHub execution | **Real SDK, `@keeperhub/sdk`**, now run by the external agent's own CLI with its own org key — falls back to a same-shaped simulated result when unset. |
 | The three "lending protocol" providers (Aave/Compound/Morpho gateway agents) | **Simulated economics** (the quoted APY), real `@lucid-agents/core` A2A agents `./app` hosts at `/api/mock-providers/*` — the market, not the actor, so it stays platform-hosted regardless of who's buying. The **Aave v3 gateway's on-chain contracts are real**: its `rateContract`/`supplyContract` point at Aave v3's actual, verified Pool proxy on Base Sepolia (from `aave-dao/aave-address-book`), so a run that selects it drives a genuine `getReserveNormalizedIncome` read + `supply` write via KeeperHub. Compound v3 and Morpho have no usable Base Sepolia testnet deployment to point to (confirmed against their own repos/APIs), so those two gateways' contract addresses are still illustrative/fake — a run that selects either fails at the KeeperHub step with an "ABI not verified" error. |
@@ -179,21 +179,27 @@ sequenceDiagram
     A->>C: recordProcurement(taskId, ...) — agent's own wallet
     A->>P: POST report (SIWX-signed)
     P->>P: ERC-8004 gate check (live verify + on-chain allowlist)
-    H->>P: Open dashboard
-    P->>C: Read ProcurementRecorded logs
-    P-->>H: Render activity/receipt history
+    loop every 5s
+        H->>P: Dashboard polls GET /api/procurement-history
+        P->>C: Read ProcurementRecorded logs
+        P-->>H: Render pending-status + receipt table
+    end
+    H->>P: Click "view" on a row
+    P-->>H: /tasks/[taskId] — full order detail
 ```
 
 | Step | Entrypoint / route | Auth / gate | Purpose |
 | --- | --- | --- | --- |
 | 1. Set policy | `PATCH /api/policy` | admin-only (dashboard) | Human-editable treasury policy (max amount, allowed assets/protocols, min APY). |
-| 2. Describe intent | `POST /api/procurement-intents` | admin-only (dashboard) | Records a pending intent and dispatches it as a webhook — **no execution happens here.** |
+| 2. Describe intent | `POST /api/procurement-intents` | admin-only (dashboard) | Records a pending intent (with a fresh bytes32 `taskId`, `app/lib/chain/taskId.ts`) and dispatches it as a webhook — **no execution happens here.** The dashboard's "Dispatch to subscribed agents" button disables itself and shows a spinner for the duration of this call. |
 | 3. Webhook delivery | Hermes `/webhooks/<route>` or OpenClaw `/plugins/webhooks/<routeId>` or a generic URL | HMAC / Bearer, per platform | The platform-specific, admin-registered subscriber receives the intent. |
 | 4. Discover + policy (read) | `GET /api/agent/entrypoints/discover/invoke`, `.../policy/invoke` | none | The external agent reads platform-hosted market data and the current policy. |
 | 5. Execute | *(off-platform)* | the agent's own KeeperHub key | `evaluatePolicy()` locally, then `DirectExecutor.checkAndExecute()` — this app never sees these credentials. |
-| 6. Record on-chain | `ProcurementRegistry.recordProcurement()` | on-chain `authorizedAgents` allowlist | The agent's own wallet writes the durable receipt. |
-| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live ERC-8004 gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to the same `taskId` as the on-chain receipt. |
-| 8. Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id. |
+| 6. Record on-chain | `ProcurementRegistry.recordProcurement()` | on-chain `authorizedAgents` allowlist | The agent's own wallet writes the durable receipt, under the *same* `taskId` step 2 assigned (adopted from the webhook payload — `agent-skills/scripts/cli/src/orchestrate.ts`) rather than one it invents itself. |
+| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live ERC-8004 gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to that same `taskId` — this is what lets the dashboard resolve the exact "dispatched" row it's already showing instead of the report appearing as an unrelated task. Any status in `ProcurementReportSchema`'s enum is accepted, not just a terminal one — see `app/README.md`'s note on today's single-report-at-the-end CLI behavior vs. what the dashboard already supports. |
+| 8. Poll (agent-facing) | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id — for an external agent/caller, not the dashboard. |
+| 9. View activity (admin) | `GET /api/procurement-history` | admin-only (dashboard) | Polled every 5s; every non-terminal task plus every on-chain receipt, feeding the "Activity & receipts" table. |
+| 10. View one order (admin) | `GET /api/procurement-history/[taskId]` -> `/tasks/[taskId]` | admin-only (dashboard) | The table's "view" link — full detail for one task. |
 
 ### Server secrets vs. caller secrets
 
