@@ -1,4 +1,4 @@
-# `./agent-demo` — a demo external agent (stands in for Hermes Agent / OpenClaw)
+# Demo External Agent
 
 `./agent-skills` teaches *any* external agent how to act as the Enterprise's
 procurement actor. `./agent-skills/scripts/cli` (`procure`) is a
@@ -276,8 +276,8 @@ directly — no manual file-copying step required.
 
 ```mermaid
 sequenceDiagram
-    participant Admin as Human admin
-    participant UI as ./app dashboard
+    participant Admin as Human enterprise admin user
+    participant UI as Enterprise Procurement management platform (./app) dashboard
     participant Sub as Webhook subscribers list
     participant Demo as agent-demo serve (this package)
 
@@ -326,7 +326,7 @@ connected wallet itself sign `addAuthorizedAgent()` on the target registry.
 
 ```mermaid
 flowchart TB
-    Admin["Human admin, wallet connected\ntypes address + agentId"] --> Verify["POST /api/agents/verify"]
+    Admin["Human enterprise admin user, wallet connected\ntypes address + agentId"] --> Verify["POST /api/agents/verify"]
     Verify --> Gate["gate.ts: verifyAgentOnChain(agentId, address)"]
     Gate --> IdReg["ERC-8004 Identity Registry\n(Base Sepolia)\nowner of agentId"]
     IdReg -->|"owner != address"| Fail2["403 verification_failed"]

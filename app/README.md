@@ -1,4 +1,4 @@
-# `./app` — the management platform
+# Enterprise Procurement management platform (Web App)
 
 A self-contained Next.js 16 App Router project — its own `package.json`,
 `node_modules`, `next.config.mjs`, `tsconfig.json`, and env files all live
@@ -99,10 +99,10 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant H as Human admin (browser)
-    participant P as ./app
+    participant H as Human enterprise admin user (browser)
+    participant P as Enterprise Procurement management platform (./app)
     participant W as Webhook subscriber (Hermes/OpenClaw)
-    participant A as External agent (agent-skills CLI)
+    participant A as External agent (Hermes Agent, OpenClaw, Demo Agent (./agent-demo), etc)
     participant M as Mock provider agents (A2A)
     participant K as KeeperHub (@keeperhub/sdk)
     participant C as ProcurementRegistry (Base Sepolia)
@@ -112,7 +112,7 @@ sequenceDiagram
     H->>P: POST /api/procurement-intents { instruction, asset, amount, minApyBps }
     P->>P: mint a bytes32 taskId (lib/chain/taskId.ts), save pending task (status "dispatched")
     P->>W: signed webhook POST { taskId, ...payload }
-    P-->>H: dispatch summary — button re-enables; new row appears in "Activity & receipts"
+    P-->>H: dispatch summary — button re-enables, new row appears in "Activity & receipts"
     W->>A: agent acts on the rendered intent (same taskId)
     A->>P: POST /api/agent/entrypoints/discover/invoke
     loop for each known provider
@@ -176,7 +176,7 @@ fixed in this route and `lib/chain/taskId.ts`/`agent-skills/scripts/cli/src/orch
    in that route), sourced entirely from the off-chain report — same
    Status/Details columns, just no `tx` link since none exists.
 
-## Interaction model
+## Interaction Flow
 
 | Step | Entrypoint / route | Auth / gate | Purpose |
 | --- | --- | --- | --- |
