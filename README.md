@@ -1,11 +1,17 @@
-# Enterprise Procurement Agent Platform
+# Enterprise Procurement Agent -- Mangement Platform
 
-**Use case #4 — Enterprise procurement agent**, built on the **Lucid Agents
-SDK** (`@lucid-agents/*`), **KeeperHub** (`@keeperhub/sdk`), and a Foundry
-contracts project (`./contracts`) on **Base Sepolia**.
+## Overview
+
+This is the "Enterprise Procurement Agent -- Mangement Platform", where enable AI Agent to shape the traditional enterprise procurement workflow.
+
+As a use case, an human enterprise admin user prompt like this:
 
 > "Find an agent capable of moving 1M USDC from our treasury to an approved
 > lending protocol, but only if APY > 4%."
+
+Then, **enterprise procurement agent**, built on the **Lucid Agents
+SDK** (`@lucid-agents/*`), **KeeperHub** (`@keeperhub/sdk`), would coordinate with the smart contracts (`./contracts`) on **Base Sepolia** to execute an enterprise procurement workflow by the prompt-inputted like above by the human enterprise admin user.
+
 
 A human enterprise admin says that once, through this platform's dashboard.
 `./app` is **management infrastructure, not the actor**: it records the
@@ -16,13 +22,16 @@ running the `agent-skills` CLI toolkit on its own machine, with its own
 KeeperHub key and its own wallet — is the one that discovers candidate
 lending-protocol agents over A2A/Agent Cards, evaluates the enterprise's
 policy, executes via KeeperHub's guarded on-chain call, and writes the
-receipt to `ProcurementRegistry` on Base Sepolia.
+receipt to `ProcurementRegistry` contract on Base Sepolia.
 
 **The core split:** the agent's own `agent-skills` CLI decides *who to buy
 from and how to execute* (A2A discovery, policy evaluation, KeeperHub).
 `./app` decides *whether that agent is allowed to act at all* (ERC-8004
 identity gate) and *shows the enterprise what happened* (on-chain activity
 history). Neither one does the other's job.
+
+NOTE: Currently, a Demo Agent (`./agent-demo`) can work with this platform by reading the `./agent-skills`. This agent skills (`./agent-skills`) has been on the way to expand for **Hermes Agent** and **OpenClaw** near the future.
+
 
 ## Target architecture
 
