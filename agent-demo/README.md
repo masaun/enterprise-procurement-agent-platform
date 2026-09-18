@@ -690,28 +690,27 @@ not variants of one token, and there's no swap/bridge between them on
 testnet. Use the Aave faucet below to get the right one.
 
 **Minting Aave test USDC to a wallet you don't hold the key for** (e.g.
-KeeperHub's execution wallet): Aave's Base Sepolia USDC is owned by a
-permissionless `Faucet` contract that exposes
-`mint(address token, address to, uint256 amount)` — callable by *any*
-gas-funded wallet, minting to *any* recipient address, no private key for
-the recipient needed:
+KeeperHub's execution wallet, `0xbc44e17797048d137b6be6aa2651af89a4248218`
+above): `./app` now productizes this — its dashboard's **Faucet** panel
+(`/faucet`, see [`app/README.md`](../app/README.md#module-map)) calls the
+same permissionless `Faucet.mint(address token, address to, uint256 amount)`
+shown above from the platform's `ENTERPRISE_ADMIN_PRIVATE_KEY` (or a
+connected wallet), to any recipient address, no private key for the
+recipient needed. Open `http://localhost:3000/faucet`, paste the recipient
+address and an amount, and submit — no block explorer or `cast` required.
+
+If you'd rather call the contract directly (no dashboard running), the same
+values work via a block explorer's "Write Contract" tab, `cast send`, or a
+one-off viem/ethers script, from any wallet funded with a little Base
+Sepolia ETH for gas:
 
 ```
-Faucet:     0xD9145b5F45Ad4519c7ACcD6E0A4A82e83bB8A6Dc
-USDC token: 0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f
-
 Faucet.mint(
   token:  0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f,  // Aave test USDC
-  to:     0xBC44E17797048D137b6bE6Aa2651af89a4248218,  // KeeperHub's execution wallet
+  to:     0xBC44E17797048D137b6bE6Aa2651af89a4248218,  // recipient, e.g. KeeperHub's execution wallet
   amount: 2000000                                       // 2 USDC (6 decimals)
 )
 ```
-
-Call it from any wallet that already has a little Base Sepolia ETH for gas
-(e.g. `PROCURE_PRIVATE_KEY`'s wallet) via a block explorer's "Write Contract"
-tab, `cast send`, or a one-off viem/ethers script — the `app.aave.com`
-faucet UI works too, but only mints to the wallet you're connected as, which
-doesn't help for a wallet whose key you don't hold.
 
 ## Relationship to `./agent-skills/scripts/cli`
 
@@ -725,3 +724,8 @@ doesn't help for a wallet whose key you don't hold.
 See [`../agent-skills/README.md`](../agent-skills/README.md) for the skill
 package and CLI this agent drives, and [`../README.md`](../README.md) for
 the project-level architecture.
+
+## DEMO Video
+
+- Demonstrate the interaction between the Demo Agent (`./agent-demo`) and Web App (`./app`):    
+  https://youtu.be/ZZuMhfOZRqs?si=etQZqzL-GYKBkl2P
