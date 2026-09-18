@@ -18,7 +18,7 @@ A human enterprise admin says that once, through this platform's dashboard.
 `./app` is **management infrastructure, not the actor**: it records the
 intent, pushes it out as a webhook to whichever external agent (Hermes
 Agent, OpenClaw) is subscribed, and gates any results that come back with a
-live, on-chain ERC-8004 identity check. The **external agent itself** —
+live, on-chain [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) identity check. The **external agent itself** —
 running the `agent-skills` CLI toolkit on its own machine, with its own
 KeeperHub key and its own wallet — is the one that discovers candidate
 lending-protocol agents over A2A/Agent Cards, evaluates the enterprise's
@@ -27,7 +27,7 @@ receipt to `ProcurementRegistry` contract on Base Sepolia.
 
 **The core split:** the agent's own `agent-skills` CLI decides *who to buy
 from and how to execute* (A2A discovery, policy evaluation, KeeperHub).
-`./app` decides *whether that agent is allowed to act at all* (ERC-8004
+`./app` decides *whether that agent is allowed to act at all* ([ERC-8004](https://github.com/erc-8004/erc-8004-contracts)
 identity gate) and *shows the enterprise what happened* (on-chain activity
 history). Neither one does the other's job.
 
@@ -86,7 +86,7 @@ flowchart TB
 `External` above is deliberately generic — it's whichever agent runtime the
 enterprise admin registered a webhook route for. `./agent-demo` is this
 repo's own concrete implementation of that box: it reads `./agent-skills`
-itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
+itself, reasons over an LLM via [OpenRouter](https://openrouter.ai/docs/quickstart), and drives the `CLI` node above
 (`procure`) — see [`agent-demo/README.md`](agent-demo/README.md).
 
 
@@ -128,7 +128,7 @@ sequenceDiagram
 | 4. Discover + policy (read) | `GET /api/agent/entrypoints/discover/invoke`, `.../policy/invoke` | none | The external agent reads platform-hosted market data and the current policy. |
 | 5. Execute | *(off-platform)* | the agent's own KeeperHub key | `evaluatePolicy()` locally, then `DirectExecutor.checkAndExecute()` — this app never sees these credentials. |
 | 6. Record on-chain | `ProcurementRegistry.recordProcurement()` | on-chain `authorizedAgents` allowlist | The agent's own wallet writes the durable receipt, under the *same* `taskId` step 2 assigned (adopted from the webhook payload — `agent-skills/scripts/cli/src/orchestrate.ts`) rather than one it invents itself. |
-| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live ERC-8004 gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to that same `taskId` — this is what lets the dashboard resolve the exact "dispatched" row it's already showing instead of the report appearing as an unrelated task. Any status in `ProcurementReportSchema`'s enum is accepted, not just a terminal one — see `app/README.md`'s note on today's single-report-at-the-end CLI behavior vs. what the dashboard already supports. |
+| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to that same `taskId` — this is what lets the dashboard resolve the exact "dispatched" row it's already showing instead of the report appearing as an unrelated task. Any status in `ProcurementReportSchema`'s enum is accepted, not just a terminal one — see `app/README.md`'s note on today's single-report-at-the-end CLI behavior vs. what the dashboard already supports. |
 | 8. Poll (agent-facing) | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id — for an external agent/caller, not the dashboard. |
 | 9. View activity (admin) | `GET /api/procurement-history` | admin-only (dashboard) | Polled every 5s; every non-terminal task plus every on-chain receipt, feeding the "Activity & receipts" table. |
 | 10. View one order (admin) | `GET /api/procurement-history/[taskId]` -> `/tasks/[taskId]` | admin-only (dashboard) | The table's "view" link — full detail for one task. |
@@ -152,6 +152,7 @@ for the full breakdown.
 | Contract | Address (Base Sepolia) |
 | --- | --- |
 | [`ProcurementRegistryFactory.sol`](contracts/src/ProcurementRegistryFactory.sol) | [`0x37B32265AdD721156dA8F6192a619FBCaD4522e3`](https://sepolia.basescan.org/address/0x37b32265add721156da8f6192a619fbcad4522e3#code) |
+| [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) `IdentityRegistry` (official deployment, not this repo's own) | [`0x8004A818BFB912233c491871b3d84c89A494BD9e`](https://sepolia.basescan.org/address/0x8004a818bfb912233c491871b3d84c89a494bd9e#code) |
 
 Each enterprise admin creates and owns their own `ProcurementRegistry.sol` instance by calling the factory's `createNewProcurementRegistry()` (see [`contracts/README.md`](contracts/README.md)) — there's no single canonical registry address anymore.
 
@@ -162,7 +163,7 @@ Each enterprise admin creates and owns their own `ProcurementRegistry.sol` insta
 | --- | --- | --- |
 | `./app` | Next.js 16 App Router — the management platform's dashboard + API | [`app/README.md`](app/README.md) |
 | `./app/api/agent` | The agent-facing surface: A2A Agent Card, SIWX-protected `authenticate`/`discover`/`policy`/`report`/`procurement_status` entrypoints | [`app/README.md`](app/README.md) |
-| `./app/lib/identity/gate.ts` | Live ERC-8004 verification of an inbound caller (composes `@lucid-agents/identity`'s registry-client primitives) | [`app/README.md`](app/README.md) |
+| `./app/lib/identity/gate.ts` | Live [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) verification of an inbound caller (composes `@lucid-agents/identity`'s registry-client primitives) | [`app/README.md`](app/README.md) |
 | `./app/lib/webhooks` | Subscriber registry + per-platform (Hermes/OpenClaw/generic) webhook dispatch | [`app/README.md`](app/README.md) |
 | `./app/lib/chain` | viem client reading/writing `ProcurementRegistry` on Base Sepolia | [`app/README.md`](app/README.md) |
 | `./contracts` | Foundry project: `ProcurementRegistry.sol` — on-chain activity history + on-chain agent allowlist | [`contracts/README.md`](contracts/README.md) |
@@ -181,8 +182,8 @@ management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 | --- | --- |
 | SIWX challenge/sign/verify (EIP-191 signature, nonce, expiry) | **Real.** `@lucid-agents/payments`. |
 | A2A discovery + invocation (Agent Cards, `quote` skill calls) | **Real.** `@lucid-agents/a2a`, against three small real agent runtimes `./app` hosts. |
-| ERC-8004 inbound gate | **Real, live on-chain verification.** `app/lib/identity/gate.ts` calls `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient` against Base Sepolia — not a static allowlist. |
-| ERC-8004 identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`app/lib/identity/register.ts`) mints a real identity on the official ERC-8004 Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. The admin enters the target **Agent Wallet Address**; the mint is then transferred to that address on-chain, so no private key for the agent wallet ever passes through this app. If the admin uses "Connect Wallet" (top of the dashboard) to pick **MetaMask** or **Rabby Wallet** — detected via EIP-6963, see `app/lib/wallet/WalletProvider.tsx` — that wallet signs and pays gas for this directly (`app/lib/identity/registerBrowser.ts`); otherwise it falls back to the platform's `ENTERPRISE_ADMIN_PRIVATE_KEY` signing server-side. |
+| [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) inbound gate | **Real, live on-chain verification.** `app/lib/identity/gate.ts` calls `@lucid-agents/identity`'s `IdentityRegistryClient`/`ReputationRegistryClient` against Base Sepolia — not a static allowlist. |
+| [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) identity registration (admin action) | **Real, live on-chain write.** The dashboard's "Authorize Agent (by Registering in the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts))" panel (`app/lib/identity/register.ts`) mints a real identity on the official [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) Identity Registry deployment on Base Sepolia — this repo doesn't deploy its own identity contract. The admin enters the target **Agent Wallet Address**; the mint is then transferred to that address on-chain, so no private key for the agent wallet ever passes through this app. If the admin uses "Connect Wallet" (top of the dashboard) to pick **MetaMask** or **Rabby Wallet** — detected via EIP-6963, see `app/lib/wallet/WalletProvider.tsx` — that wallet signs and pays gas for this directly (`app/lib/identity/registerBrowser.ts`); otherwise it falls back to the platform's `ENTERPRISE_ADMIN_PRIVATE_KEY` signing server-side. |
 | On-chain activity history | **Real.** `ProcurementRegistry.sol` (`./contracts`), deployed to Base Sepolia; the dashboard reads `ProcurementRecorded` events directly via viem (paginated in ≤10,000-block chunks — Base Sepolia's public RPC rejects a single from-genesis call), polling every 5s so the "Activity & receipts" table's Status column tracks a task from dispatch through its on-chain receipt without a reload, with a permalink (`/tasks/[taskId]`) for each row's full detail. |
 | AP2 commerce-role mandate | **Real.** `@lucid-agents/ap2` — `shopper` (the external agent) / `merchant` (each provider). |
 | KeeperHub execution | **Real SDK, `@keeperhub/sdk`**, now run by the external agent's own CLI with its own org key — falls back to a same-shaped simulated result when unset. |
@@ -238,9 +239,9 @@ Each project's env vars are documented in full where they're consumed:
 
 | Project | Holds | Full table |
 | --- | --- | --- |
-| `./app` | Platform identity, the ERC-8004 gate, on-chain reads, contract/registry administration, the test-USDC faucet | [`app/README.md#environment-variables`](app/README.md#environment-variables) |
+| `./app` | Platform identity, the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) gate, on-chain reads, contract/registry administration, the test-USDC faucet | [`app/README.md#environment-variables`](app/README.md#environment-variables) |
 | `agent-skills/scripts/cli` (`procure`) | The actor's own signing key, KeeperHub org credentials, the registry it writes receipts to | [`agent-skills/README.md#environment-variables`](agent-skills/README.md#environment-variables) |
-| `agent-demo` | Its OpenRouter LLM client, plus every `PROCURE_*` var passed straight through to the shelled-out CLI | [`agent-demo/README.md#environment-variables`](agent-demo/README.md#environment-variables) |
+| `agent-demo` | Its [OpenRouter](https://openrouter.ai/docs/quickstart) LLM client, plus every `PROCURE_*` var passed straight through to the shelled-out CLI | [`agent-demo/README.md#environment-variables`](agent-demo/README.md#environment-variables) |
 | `./contracts` | Deploy-only: `DEPLOYER_PRIVATE_KEY`, `BASE_SEPOLIA_RPC_URL`, `BASESCAN_API_KEY` | [`contracts/README.md`](contracts/README.md#deploy-to-base-sepolia) |
 
 ## Further reading
@@ -249,7 +250,7 @@ Each project's env vars are documented in full where they're consumed:
 - [`contracts/README.md`](contracts/README.md) — `ProcurementRegistry.sol`, build/test/deploy.
 - [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to act on a dispatched webhook.
 - [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to (where one exists).
-- [`agent-demo/README.md`](agent-demo/README.md) — the LLM-driven demo external agent (via OpenRouter) that reads `./agent-skills` itself and drives `procure`, standing in for a real Hermes Agent/OpenClaw install.
+- [`agent-demo/README.md`](agent-demo/README.md) — the LLM-driven demo external agent (via [OpenRouter](https://openrouter.ai/docs/quickstart)) that reads `./agent-skills` itself and drives `procure`, standing in for a real Hermes Agent/OpenClaw install.
 
 ## References
 
@@ -257,6 +258,7 @@ Each project's env vars are documented in full where they're consumed:
 - [KeeperHub Analytics](https://app.keeperhub.com/analytics) — KeeperHub's own dashboard for executed actions.
 - [Daydreams](https://www.daydreams.systems/) — the framework powering the Lucid Agents SDK (`@lucid-agents/*`).
 - [Daydreams Docs](https://docs.daydreams.systems/) — the Lucid Agents SDK's own documentation.
+- [ERC-8004 contracts](https://github.com/erc-8004/erc-8004-contracts) — the official `IdentityRegistry`/`ReputationRegistry` implementation this platform's live gate verifies against on Base Sepolia.
 
 ## DEMO Video
 

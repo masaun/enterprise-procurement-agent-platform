@@ -11,7 +11,7 @@ special, hard-coded knowledge of this platform. At startup it only loads
 `./agent-skills/SKILL.md`'s `name` + `description`, exactly like a real
 skills-compatible runtime would; once a task (a webhook, or a human's
 natural-language ask) matches, it reads the full `SKILL.md` body itself, an
-LLM (reached over **OpenRouter** — <https://openrouter.ai/docs/quickstart>)
+LLM (reached over **[OpenRouter](https://openrouter.ai/docs/quickstart)** — <https://openrouter.ai/docs/quickstart>)
 decides what to do, and it reads `references/*.md` on demand and shells out
 to the bundled `procure` CLI to actually act — the same "fastest path" the
 skill itself documents. `./agent-skills` and `./app` don't know or care that
@@ -62,7 +62,7 @@ parse a human's plain-English ask ("Move 2 USDC... only if APY > 1%") into
 the right flags, and read the right reference doc on demand instead of
 having every protocol detail hard-coded. That reasoning is what a real
 Hermes Agent or OpenClaw install brings via its own LLM — this package
-brings the same thing via OpenRouter, so the demo shows an agent *deciding*
+brings the same thing via [OpenRouter](https://openrouter.ai/docs/quickstart), so the demo shows an agent *deciding*
 to run `procure`, not a script that always does.
 
 ## Install
@@ -142,8 +142,8 @@ skipped, per `agent-skills/README.md`.)
    body once a trigger arrives, and `references/*.md` files only when the
    LLM asks for them via a tool call. Nothing about `./agent-skills`' actual
    content is hard-coded into this package's prompts.
-2. **The LLM decides, via OpenRouter.** `src/openrouter.ts` is a ~50-line
-   client for OpenRouter's OpenAI-compatible `/chat/completions` endpoint
+2. **The LLM decides, via [OpenRouter](https://openrouter.ai/docs/quickstart).** `src/openrouter.ts` is a ~50-line
+   client for [OpenRouter](https://openrouter.ai/docs/quickstart)'s OpenAI-compatible `/chat/completions` endpoint
    (tool calling included) — no vendor SDK, matching this repo's
    dependency-light CLI style. `src/agent.ts` runs the tool-calling loop:
    system prompt (persona + the full `SKILL.md` body) -> user message
@@ -182,9 +182,9 @@ agent runtime you're demoing against.
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Required. From <https://openrouter.ai/keys>. | — |
-| `OPENROUTER_MODEL` | Any model slug OpenRouter routes to (e.g. `openai/gpt-4o-mini`, `anthropic/claude-3.7-sonnet`). | `openai/gpt-4o-mini` |
-| `OPENROUTER_BASE_URL` | OpenRouter API base URL. | `https://openrouter.ai/api/v1` |
-| `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | Sent as `HTTP-Referer` / `X-Title` — OpenRouter uses these for dashboard attribution/rankings. | `http://localhost:3000` / `agent-demo` |
+| `OPENROUTER_MODEL` | Any model slug [OpenRouter](https://openrouter.ai/docs/quickstart) routes to (e.g. `openai/gpt-4o-mini`, `anthropic/claude-3.7-sonnet`). | `openai/gpt-4o-mini` |
+| `OPENROUTER_BASE_URL` | [OpenRouter](https://openrouter.ai/docs/quickstart) API base URL. | `https://openrouter.ai/api/v1` |
+| `OPENROUTER_SITE_URL`, `OPENROUTER_APP_NAME` | Sent as `HTTP-Referer` / `X-Title` — [OpenRouter](https://openrouter.ai/docs/quickstart) uses these for dashboard attribution/rankings. | `http://localhost:3000` / `agent-demo` |
 | `AGENT_DEMO_PERSONA` | `hermes` \| `openclaw` \| `generic` — which real agent runtime this run role-plays as. | `generic` |
 | `AGENT_DEMO_NAME` | Display name used in the system prompt. | `Demo External Agent` |
 | `AGENT_DEMO_MAX_TOOL_ITERATIONS` | Safety cap on the tool-calling loop. | `12` |
@@ -302,7 +302,7 @@ sequenceDiagram
 The response the dashboard sees is a `202 Accepted` sent back immediately on
 receipt — `dispatchToSubscriber` (`app/lib/webhooks/dispatch.ts`) only checks
 that the POST succeeded, it doesn't wait for the agent's reasoning loop to
-finish, since that (OpenRouter turns + shelling out to `procure`) can run
+finish, since that ([OpenRouter](https://openrouter.ai/docs/quickstart) turns + shelling out to `procure`) can run
 well past a typical webhook timeout. The actual outcome shows up as a
 `ProcurementRegistry` receipt on `./app`'s "Activity & receipts" panel once
 `run_procure act` completes, same as the manual `webhook` command.
@@ -312,7 +312,7 @@ fixtures/webhook-generic.json`) still works exactly as before and remains
 useful for a scripted/deterministic run that doesn't depend on a listener
 being up — the two are interchangeable front doors to the same agent loop.
 
-### "Authorized agents (live ERC-8004 gate)" — what's required first
+### "Authorized agents (live [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) gate)" — what's required first
 
 This panel isn't a free-text field either, and it only works with a wallet
 connected in the dashboard (top of the page) — there's no server-signed
@@ -320,7 +320,7 @@ fallback, since a `ProcurementRegistry`'s owner is always the wallet that
 created it via `ProcurementRegistryFactory` (see
 [`contracts/README.md`](../contracts/README.md)). `POST /api/agents/verify`
 runs a **live on-chain check** (`app/lib/identity/gate.ts`) that the
-`agentId` you enter really resolves, on the ERC-8004 Identity Registry
+`agentId` you enter really resolves, on the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) Identity Registry
 (Base Sepolia), to the wallet `address` you enter; only then does the
 connected wallet itself sign `addAuthorizedAgent()` on the target registry.
 
@@ -340,7 +340,7 @@ flowchart TB
 | A wallet connected in the dashboard, owning a `ProcurementRegistry` | **Depends on your session** | Connect **MetaMask**/**Rabby Wallet** at the top of the dashboard, then use "New ProcurementRegistry contract creation" to deploy one via `ProcurementRegistryFactory.createNewProcurementRegistry()` (deployed at the factory address in root [`README.md`](../README.md#deployed-contracts)) if you don't already own one. |
 | `PROCURE_REGISTRY_ADDRESS` in `agent-demo/.env` matching the registry you authorized the agent on | **Must be checked manually** | Copy the exact address shown in the dashboard's "Target ProcurementRegistry" field (or the "Your registries" pill you used) into `agent-demo/.env`'s `PROCURE_REGISTRY_ADDRESS` — a mismatch here is the classic cause of `recordProcurement` reverting with `NotAuthorizedAgent` even though the wallet *is* authorized, just on a different registry instance. |
 | `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Set** (a fixed EOA, not a throwaway-per-run key) | Needs Base Sepolia ETH for gas — see the troubleshooting section below; it has none yet. |
-| An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Set `ENTERPRISE_ADMIN_PRIVATE_KEY` in `app/.env.local` (any funded Base Sepolia key — it no longer has to match `PROCURE_PRIVATE_KEY`), then use the dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`POST /api/agents/identity`), entering `PROCURE_PRIVATE_KEY`'s address in the panel's **Agent Wallet Address** field, to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
+| An `agentId` registered to that wallet on the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) Identity Registry | **Does not exist yet** | Set `ENTERPRISE_ADMIN_PRIVATE_KEY` in `app/.env.local` (any funded Base Sepolia key — it no longer has to match `PROCURE_PRIVATE_KEY`), then use the dashboard's "Authorize Agent (by Registering in the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts))" panel (`POST /api/agents/identity`), entering `PROCURE_PRIVATE_KEY`'s address in the panel's **Agent Wallet Address** field, to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
 
 `ENTERPRISE_ADMIN_PRIVATE_KEY` (renamed from `AGENT_IDENTITY_PRIVATE_KEY`,
 which wrongly implied it had to be a specific agent's own key) and
@@ -352,7 +352,7 @@ transfers the resulting identity on-chain to whatever address is entered as
 | | `ENTERPRISE_ADMIN_PRIVATE_KEY` (`app/.env.local`) | `PROCURE_PRIVATE_KEY` (`agent-demo/.env`) |
 | --- | --- | --- |
 | Held by | `./app` (the enterprise's management platform) | `./agent-demo` (the external agent acting on the enterprise's behalf) |
-| Used for | Signing the one-time `POST /api/agents/identity` call — mints the ERC-8004 identity NFT via `IdentityRegistryClient.register()`, then transfers it via `IdentityRegistryClient.transfer()` | Signing SIWX auth challenges, executing via KeeperHub, and writing `ProcurementRegistry.recordProcurement()` |
+| Used for | Signing the one-time `POST /api/agents/identity` call — mints the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) identity NFT via `IdentityRegistryClient.register()`, then transfers it via `IdentityRegistryClient.transfer()` | Signing SIWX auth challenges, executing via KeeperHub, and writing `ProcurementRegistry.recordProcurement()` |
 | Why it signs | `register()` mints the new identity to whichever wallet signs the tx — there's no "register on behalf of" option — so this key mints, then hands the identity off | It's simply the agent's own operating wallet, used for every on-chain/auth action it takes |
 | Must equal | Nothing — any funded Base Sepolia key works; it only pays gas | The wallet whose identity gets registered and later authorized — enter its address in the panel's **Agent Wallet Address** field |
 | In production | Would normally *not* be held here at all — the agent operator would register their own identity and just hand the platform the resulting `agentId`/address (see [`app/README.md`](../app/README.md)'s server/caller-secrets table) | Always lives with the agent, never with the platform |
@@ -601,7 +601,7 @@ Funding past the gas error above surfaced a fourth, more fundamental bug:
 parameter — the address that receives the resulting aTokens — with
 `provider.registration.agentRegistry`, e.g.
 `"eip155:84532:0x2e234dae75c793f67a35089c9d99245e1c58470b"`. That's wrong on
-two counts: it's the *provider's* ERC-8004 registry identifier, not this
+two counts: it's the *provider's* [ERC-8004](https://github.com/erc-8004/erc-8004-contracts) registry identifier, not this
 agent's own wallet, and it's a CAIP-2 string, not a plain `0x...` address —
 so when KeeperHub/viem tried to encode it as an `address`, it fell back to
 ENS resolution (the standard behavior for a non-hex-address string), which
@@ -666,7 +666,7 @@ further code changes:
 
 | # | Issue | Evidence |
 | --- | --- | --- |
-| 1 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`) isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist, and/or lacks Base Sepolia ETH for `recordProcurement()`'s gas. | Real revert once the KeeperHub leg succeeds: the contract's own `NotAuthorizedAgent`, or `gas required exceeds allowance (0)` if unfunded. Use the "Authorize Agent (by Registering in the ERC-8004)" panel, then "Authorized agents", per the section above. |
+| 1 | `PROCURE_PRIVATE_KEY`'s wallet (`test_opera_1`) isn't yet on `ProcurementRegistry`'s `authorizedAgents` allowlist, and/or lacks Base Sepolia ETH for `recordProcurement()`'s gas. | Real revert once the KeeperHub leg succeeds: the contract's own `NotAuthorizedAgent`, or `gas required exceeds allowance (0)` if unfunded. Use the "Authorize Agent (by Registering in the [ERC-8004](https://github.com/erc-8004/erc-8004-contracts))" panel, then "Authorized agents", per the section above. |
 
 Once that wallet is funded and authorized, `procure act`/`submit` and
 `agent-demo` should complete the full pipeline: KeeperHub execution, the
@@ -717,7 +717,7 @@ Faucet.mint(
 | | `agent-skills/scripts/cli` (`procure`) | `agent-demo` (this package) |
 | --- | --- | --- |
 | Role | The actor's mechanical implementation — discovery read, policy evaluation, KeeperHub execution, on-chain write, reporting. | The actor's *decision layer* — what a real Hermes Agent/OpenClaw install supplies around that mechanism. |
-| Driven by | CLI flags / a webhook JSON file, deterministically. | An LLM (via OpenRouter), reasoning over `agent-skills/SKILL.md` at runtime. |
+| Driven by | CLI flags / a webhook JSON file, deterministically. | An LLM (via [OpenRouter](https://openrouter.ai/docs/quickstart)), reasoning over `agent-skills/SKILL.md` at runtime. |
 | Knows about `./agent-skills`' content? | No — it's the thing the skill *describes*, not a reader of the skill file. | Yes — reads `SKILL.md` + `references/*.md` itself, live, the same way a real agent would. |
 | Used by | Both `agent-demo`'s `run_procure` tool, and directly by any human/automation (see `agent-skills/README.md`). | — |
 
