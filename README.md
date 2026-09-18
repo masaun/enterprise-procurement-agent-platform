@@ -9,8 +9,9 @@ As a use case, an human enterprise admin user prompt like this:
 > "Find an agent capable of moving 1M USDC from our treasury to an approved
 > lending protocol, but only if APY > 4%."
 
-Then, **enterprise procurement agent**, built on the **Lucid Agents
-SDK** (`@lucid-agents/*`), **KeeperHub** (`@keeperhub/sdk`), would coordinate with the smart contracts (`./contracts`) on **Base Sepolia** to execute an enterprise procurement workflow by the prompt-inputted like above by the human enterprise admin user.
+Then, **enterprise procurement agent**, built on the **[Lucid Agents
+SDK](https://docs.daydreams.systems/)** (`@lucid-agents/*`, powered by
+**[Daydreams](https://www.daydreams.systems/)**), **[KeeperHub](https://docs.keeperhub.com/)** (`@keeperhub/sdk`), would coordinate with the smart contracts (`./contracts`) on **Base Sepolia** to execute an enterprise procurement workflow by the prompt-inputted like above by the human enterprise admin user.
 
 
 A human enterprise admin says that once, through this platform's dashboard.
@@ -89,14 +90,14 @@ itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
 (`procure`) — see [`agent-demo/README.md`](agent-demo/README.md).
 
 
-## Interaction model
+## Interaction Flow
 
 ```mermaid
 sequenceDiagram
-    participant H as Human admin
-    participant P as ./app platform
+    participant H as Human enterprise admin user
+    participant P as Enterprise Procurement management platform (./app)
     participant W as Webhook receiver (Hermes/OpenClaw)
-    participant A as External agent (CLI)
+    participant A as External agent (Hermes Agent, OpenClaw, Demo Agent (./agent-demo), etc)
     participant K as KeeperHub
     participant C as ProcurementRegistry (Base Sepolia)
 
@@ -249,6 +250,13 @@ Each project's env vars are documented in full where they're consumed:
 - [`agent-skills/README.md`](agent-skills/README.md) — the Agent Skills package and CLI, for teaching an external agent how to act on a dispatched webhook.
 - [`agent-skills/scripts/cli/README.md`](agent-skills/scripts/cli/README.md) — every `procure` CLI command paired with the raw `curl` command it's equivalent to (where one exists).
 - [`agent-demo/README.md`](agent-demo/README.md) — the LLM-driven demo external agent (via OpenRouter) that reads `./agent-skills` itself and drives `procure`, standing in for a real Hermes Agent/OpenClaw install.
+
+## References
+
+- [KeeperHub Docs](https://docs.keeperhub.com/) — the guarded on-chain execution SDK (`@keeperhub/sdk`) the external agent uses to run `checkAndExecute()`.
+- [KeeperHub Analytics](https://app.keeperhub.com/analytics) — KeeperHub's own dashboard for executed actions.
+- [Daydreams](https://www.daydreams.systems/) — the framework powering the Lucid Agents SDK (`@lucid-agents/*`).
+- [Daydreams Docs](https://docs.daydreams.systems/) — the Lucid Agents SDK's own documentation.
 
 ## DEMO Video
 

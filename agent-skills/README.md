@@ -64,11 +64,11 @@ needed (expensive, on demand). This package follows that shape exactly:
 | `references/examples.md` | Wanting a worked transcript | Real accepted/rejected/webhook-triggered runs. |
 | `scripts/cli/` | Can shell out but not craft HTTP calls / on-chain writes itself | The `procure` command (below) — now does discovery-read, policy evaluation, KeeperHub execution, and the on-chain receipt write, not just HTTP plumbing. |
 
-## Interaction model
+## Interaction Flow
 
 ```mermaid
 sequenceDiagram
-    participant P as ./app (platform)
+    participant P as Enterprise Procurement management platform (./app)
     participant W as Webhook receiver (this agent's platform)
     participant CLI as procure CLI
     participant K as KeeperHub
