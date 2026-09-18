@@ -33,7 +33,7 @@ history). Neither one does the other's job.
 NOTE: Currently, a Demo Agent (`./agent-demo`) can work with this platform by reading the `./agent-skills`. This agent skills (`./agent-skills`) has been on the way to expand for **Hermes Agent** and **OpenClaw** near the future.
 
 
-## Target architecture
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -56,8 +56,9 @@ flowchart TB
         IdRegistry["ERC-8004 Identity +\nReputation Registries"]
     end
 
-    subgraph External["External agent (Hermes / OpenClaw)"]
+    subgraph External["External agent (Hermes / OpenClaw / agent-demo)"]
         WebhookRecv["Webhook receiver"]
+        Demo["agent-demo\n(LLM via OpenRouter,\nreads agent-skills at runtime)"]
         CLI["agent-skills CLI\nprocure act / submit"]
         KH["KeeperHub\nDirectExecutor"]
     end
@@ -66,7 +67,8 @@ flowchart TB
     UI -->|edit| PolicyStore
     UI -->|submit intent| WebhookReg
     WebhookReg -->|signed POST| WebhookRecv
-    WebhookRecv --> CLI
+    WebhookRecv --> Demo
+    Demo -->|"decides, then shells out to"| CLI
     CLI -->|discover / policy| Mocks
     CLI -->|policy| PolicyStore
     CLI --> KH
@@ -86,6 +88,73 @@ repo's own concrete implementation of that box: it reads `./agent-skills`
 itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
 (`procure`) — see [`agent-demo/README.md`](agent-demo/README.md).
 
+
+## Interaction model
+
+```mermaid
+sequenceDiagram
+    participant H as Human admin
+    participant P as ./app platform
+    participant W as Webhook receiver (Hermes/OpenClaw)
+    participant A as External agent (CLI)
+    participant K as KeeperHub
+    participant C as ProcurementRegistry (Base Sepolia)
+
+    H->>P: Set/edit policy (PATCH /api/policy)
+    H->>P: Describe procurement intent (POST /api/procurement-intents)
+    P->>W: Dispatch signed webhook (platform-specific payload)
+    W->>A: Agent acts (rendered prompt / TaskFlow run_task)
+    A->>P: GET discover/policy entrypoints
+    A->>A: evaluatePolicy() locally, pick best offer
+    A->>K: DirectExecutor.checkAndExecute()
+    A->>C: recordProcurement(taskId, ...) — agent's own wallet
+    A->>P: POST report (SIWX-signed)
+    P->>P: ERC-8004 gate check (live verify + on-chain allowlist)
+    loop every 5s
+        H->>P: Dashboard polls GET /api/procurement-history
+        P->>C: Read ProcurementRecorded logs
+        P-->>H: Render pending-status + receipt table
+    end
+    H->>P: Click "view" on a row
+    P-->>H: /tasks/[taskId] — full order detail
+```
+
+| Step | Entrypoint / route | Auth / gate | Purpose |
+| --- | --- | --- | --- |
+| 1. Set policy | `PATCH /api/policy` | admin-only (dashboard) | Human-editable treasury policy (max amount, allowed assets/protocols, min APY). |
+| 2. Describe intent | `POST /api/procurement-intents` | admin-only (dashboard) | Records a pending intent (with a fresh bytes32 `taskId`, `app/lib/chain/taskId.ts`) and dispatches it as a webhook — **no execution happens here.** The dashboard's "Dispatch to subscribed agents" button disables itself and shows a spinner for the duration of this call. |
+| 3. Webhook delivery | Hermes `/webhooks/<route>` or OpenClaw `/plugins/webhooks/<routeId>` or a generic URL | HMAC / Bearer, per platform | The platform-specific, admin-registered subscriber receives the intent. |
+| 4. Discover + policy (read) | `GET /api/agent/entrypoints/discover/invoke`, `.../policy/invoke` | none | The external agent reads platform-hosted market data and the current policy. |
+| 5. Execute | *(off-platform)* | the agent's own KeeperHub key | `evaluatePolicy()` locally, then `DirectExecutor.checkAndExecute()` — this app never sees these credentials. |
+| 6. Record on-chain | `ProcurementRegistry.recordProcurement()` | on-chain `authorizedAgents` allowlist | The agent's own wallet writes the durable receipt, under the *same* `taskId` step 2 assigned (adopted from the webhook payload — `agent-skills/scripts/cli/src/orchestrate.ts`) rather than one it invents itself. |
+| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live ERC-8004 gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to that same `taskId` — this is what lets the dashboard resolve the exact "dispatched" row it's already showing instead of the report appearing as an unrelated task. Any status in `ProcurementReportSchema`'s enum is accepted, not just a terminal one — see `app/README.md`'s note on today's single-report-at-the-end CLI behavior vs. what the dashboard already supports. |
+| 8. Poll (agent-facing) | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id — for an external agent/caller, not the dashboard. |
+| 9. View activity (admin) | `GET /api/procurement-history` | admin-only (dashboard) | Polled every 5s; every non-terminal task plus every on-chain receipt, feeding the "Activity & receipts" table. |
+| 10. View one order (admin) | `GET /api/procurement-history/[taskId]` -> `/tasks/[taskId]` | admin-only (dashboard) | The table's "view" link — full detail for one task. |
+
+### Server secrets vs. caller secrets
+
+Two credential sets never mix: `./app` cannot read, set, or override
+anything the external agent holds, and vice versa. `./app` holds no
+treasury or KeeperHub key at all — only its own identity/gate config
+(`ENTERPRISE_ADMIN_PRIVATE_KEY`, `AGENT_MCP_API_KEY`, `RPC_URL`). The
+external agent holds everything that actually moves money or writes
+on-chain (`PROCURE_PRIVATE_KEY`, `PROCURE_KEEPERHUB_API_KEY`,
+`PROCURE_REGISTRY_ADDRESS`). See
+[`app/README.md#server-secrets-vs-caller-secrets`](app/README.md#server-secrets-vs-caller-secrets)
+and [`agent-skills/README.md#server-secrets-vs-caller-secrets`](agent-skills/README.md#server-secrets-vs-caller-secrets)
+for the full breakdown.
+
+
+## Deployed contract addresses (on `Base Sepolia`🟦)
+
+| Contract | Address (Base Sepolia) |
+| --- | --- |
+| [`ProcurementRegistryFactory.sol`](contracts/src/ProcurementRegistryFactory.sol) | [`0x37B32265AdD721156dA8F6192a619FBCaD4522e3`](https://sepolia.basescan.org/address/0x37b32265add721156da8f6192a619fbcad4522e3#code) |
+
+Each enterprise admin creates and owns their own `ProcurementRegistry.sol` instance by calling the factory's `createNewProcurementRegistry()` (see [`contracts/README.md`](contracts/README.md)) — there's no single canonical registry address anymore.
+
+
 ## Repository layout
 
 | Path | What it is | Docs |
@@ -104,13 +173,6 @@ itself, reasons over an LLM via OpenRouter, and drives the `CLI` node above
 four independent, self-contained projects (each with its own dependency
 management — `npm`/`npm`/`npm`/`forge`) living side by side in this repo.
 
-### Deployed contracts
-
-| Contract | Address (Base Sepolia) |
-| --- | --- |
-| [`ProcurementRegistryFactory.sol`](contracts/src/ProcurementRegistryFactory.sol) | [`0x37B32265AdD721156dA8F6192a619FBCaD4522e3`](https://sepolia.basescan.org/address/0x37b32265add721156da8f6192a619fbcad4522e3#code) |
-
-Each enterprise admin creates and owns their own `ProcurementRegistry.sol` instance by calling the factory's `createNewProcurementRegistry()` (see [`contracts/README.md`](contracts/README.md)) — there's no single canonical registry address anymore.
 
 ## What's real vs. simulated
 
@@ -168,61 +230,6 @@ Or run `agent-demo serve` to give it a real HTTP listener and register
 wakes the agent up live, no manual payload file needed. See
 [`agent-demo/README.md`](agent-demo/README.md#live-wire-registering-agent-demo-as-a-webhook-subscriber).
 
-## Interaction model
-
-```mermaid
-sequenceDiagram
-    participant H as Human admin
-    participant P as ./app platform
-    participant W as Webhook receiver (Hermes/OpenClaw)
-    participant A as External agent (CLI)
-    participant K as KeeperHub
-    participant C as ProcurementRegistry (Base Sepolia)
-
-    H->>P: Set/edit policy (PATCH /api/policy)
-    H->>P: Describe procurement intent (POST /api/procurement-intents)
-    P->>W: Dispatch signed webhook (platform-specific payload)
-    W->>A: Agent acts (rendered prompt / TaskFlow run_task)
-    A->>P: GET discover/policy entrypoints
-    A->>A: evaluatePolicy() locally, pick best offer
-    A->>K: DirectExecutor.checkAndExecute()
-    A->>C: recordProcurement(taskId, ...) — agent's own wallet
-    A->>P: POST report (SIWX-signed)
-    P->>P: ERC-8004 gate check (live verify + on-chain allowlist)
-    loop every 5s
-        H->>P: Dashboard polls GET /api/procurement-history
-        P->>C: Read ProcurementRecorded logs
-        P-->>H: Render pending-status + receipt table
-    end
-    H->>P: Click "view" on a row
-    P-->>H: /tasks/[taskId] — full order detail
-```
-
-| Step | Entrypoint / route | Auth / gate | Purpose |
-| --- | --- | --- | --- |
-| 1. Set policy | `PATCH /api/policy` | admin-only (dashboard) | Human-editable treasury policy (max amount, allowed assets/protocols, min APY). |
-| 2. Describe intent | `POST /api/procurement-intents` | admin-only (dashboard) | Records a pending intent (with a fresh bytes32 `taskId`, `app/lib/chain/taskId.ts`) and dispatches it as a webhook — **no execution happens here.** The dashboard's "Dispatch to subscribed agents" button disables itself and shows a spinner for the duration of this call. |
-| 3. Webhook delivery | Hermes `/webhooks/<route>` or OpenClaw `/plugins/webhooks/<routeId>` or a generic URL | HMAC / Bearer, per platform | The platform-specific, admin-registered subscriber receives the intent. |
-| 4. Discover + policy (read) | `GET /api/agent/entrypoints/discover/invoke`, `.../policy/invoke` | none | The external agent reads platform-hosted market data and the current policy. |
-| 5. Execute | *(off-platform)* | the agent's own KeeperHub key | `evaluatePolicy()` locally, then `DirectExecutor.checkAndExecute()` — this app never sees these credentials. |
-| 6. Record on-chain | `ProcurementRegistry.recordProcurement()` | on-chain `authorizedAgents` allowlist | The agent's own wallet writes the durable receipt, under the *same* `taskId` step 2 assigned (adopted from the webhook payload — `agent-skills/scripts/cli/src/orchestrate.ts`) rather than one it invents itself. |
-| 7. Report | `POST /api/agent/entrypoints/report/invoke` | SIWX + live ERC-8004 gate | Rich detail (timeline, policy evaluation) for the dashboard, tied to that same `taskId` — this is what lets the dashboard resolve the exact "dispatched" row it's already showing instead of the report appearing as an unrelated task. Any status in `ProcurementReportSchema`'s enum is accepted, not just a terminal one — see `app/README.md`'s note on today's single-report-at-the-end CLI behavior vs. what the dashboard already supports. |
-| 8. Poll (agent-facing) | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id — for an external agent/caller, not the dashboard. |
-| 9. View activity (admin) | `GET /api/procurement-history` | admin-only (dashboard) | Polled every 5s; every non-terminal task plus every on-chain receipt, feeding the "Activity & receipts" table. |
-| 10. View one order (admin) | `GET /api/procurement-history/[taskId]` -> `/tasks/[taskId]` | admin-only (dashboard) | The table's "view" link — full detail for one task. |
-
-### Server secrets vs. caller secrets
-
-Two credential sets never mix: `./app` cannot read, set, or override
-anything the external agent holds, and vice versa. `./app` holds no
-treasury or KeeperHub key at all — only its own identity/gate config
-(`ENTERPRISE_ADMIN_PRIVATE_KEY`, `AGENT_MCP_API_KEY`, `RPC_URL`). The
-external agent holds everything that actually moves money or writes
-on-chain (`PROCURE_PRIVATE_KEY`, `PROCURE_KEEPERHUB_API_KEY`,
-`PROCURE_REGISTRY_ADDRESS`). See
-[`app/README.md#server-secrets-vs-caller-secrets`](app/README.md#server-secrets-vs-caller-secrets)
-and [`agent-skills/README.md#server-secrets-vs-caller-secrets`](agent-skills/README.md#server-secrets-vs-caller-secrets)
-for the full breakdown.
 
 ## Environment variables
 
