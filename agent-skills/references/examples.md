@@ -1,8 +1,9 @@
 # Worked examples
 
 Real output from `procure submit` run against a local `./app` instance with
-no `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_PRIVATE_KEY` / `PROCUREMENT_REGISTRY_ADDRESS`
-configured (KeeperHub demo mode, throwaway signer, on-chain write skipped —
+no `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_PRIVATE_KEY` configured and no
+active `ProcurementRegistry` set on the platform side (KeeperHub demo mode,
+throwaway signer, on-chain write skipped —
 this is the CLI's own graceful-degradation path, described in
 `agent-skills/README.md`). Provider APYs include a small live jitter (see
 `app/lib/lucid/mock-providers.ts`), so exact numbers will differ run to run
@@ -39,9 +40,10 @@ eligible; Morpho wins on APY:
 ```
 
 This is the CLI's own local view, printed before its `report` call — since
-no `PROCUREMENT_REGISTRY_ADDRESS` was configured on the platform side
-either in this run, `report` was rejected (`registry_not_configured`, a
-warning on stderr) and the task never made it into the dashboard. With a
+no wallet had connected in the dashboard to create/select a
+`ProcurementRegistry` (see `app/lib/chain/activeRegistryStore.ts`) either in
+this run, `report` was rejected (`registry_not_configured`, a warning on
+stderr) and the task never made it into the dashboard. With a
 real deployment, `taskId` also identifies the matching
 `ProcurementRegistry.ProcurementRecorded` on-chain event, and a successful
 `report` call appends two more events server-side (see below).

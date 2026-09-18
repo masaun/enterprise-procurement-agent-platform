@@ -96,11 +96,16 @@ sequenceDiagram
 | Poll | `POST /api/agent/entrypoints/procurement_status/invoke` | none | Look up a previously reported task by id. |
 
 **Before any of this works, the enterprise admin must authorize this
-agent's wallet** via the dashboard's "Authorized agents" panel
-(`POST /api/agents/authorized`), which runs a live ERC-8004 verification
-(this agent's `agentId` must resolve, on-chain, to this agent's wallet
-address) before adding it to `ProcurementRegistry`'s allowlist. Without that,
-both the on-chain write and the `report` call fail.
+agent's wallet** via the dashboard's "Authorized agents" panel, with a
+wallet connected there (it must be the target registry's owner). The panel
+runs a live ERC-8004 verification (`POST /api/agents/verify`) — this
+agent's `agentId` must resolve, on-chain, to this agent's wallet address —
+then the connected wallet itself signs `addAuthorizedAgent()` on that
+registry. Make sure this agent's `PROCURE_REGISTRY_ADDRESS` matches that
+same registry (shown in the panel's "Target ProcurementRegistry" field) —
+otherwise `recordProcurement` reverts with `NotAuthorizedAgent` even though
+the wallet is authorized, just on a different registry instance. Without
+all of this, both the on-chain write and the `report` call fail.
 
 ## Registering a webhook route (done on your own platform, not here)
 
@@ -131,10 +136,10 @@ KeeperHub key at all** — this agent is the only party that does:
 
 | Platform-side (`app/.env`) | Actor-side (`~/.procure/config.json` / `PROCURE_*` env — this agent's own) |
 | --- | --- |
-| `CONTRACT_OWNER_PRIVATE_KEY` — administers the on-chain `authorizedAgents` allowlist only, after a live ERC-8004 check. Never used for treasury funds. | `PROCURE_PRIVATE_KEY` — this agent's own wallet: signs SIWX *and* writes the on-chain receipt. |
+| *(none — `authorizedAgents` has no platform-held key; it's administered only by whichever connected wallet owns that registry via `ProcurementRegistryFactory`)* | `PROCURE_PRIVATE_KEY` — this agent's own wallet: signs SIWX *and* writes the on-chain receipt. |
 | `AGENT_MCP_API_KEY` — the shared secret `app/api/agent/mcp` checks *incoming* requests against. | `PROCURE_MCP_API_KEY` — the same value, sent as `Authorization: Bearer <key>`. |
-| `RPC_URL` / `PROCUREMENT_REGISTRY_ADDRESS` — read-only chain queries + the gate's registry lookups. | `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_KEEPERHUB_BASE_URL` / `PROCURE_KEEPERHUB_EXECUTION_MODE` — **this agent's own** KeeperHub org credentials. `./app` never sees these. |
-| *(nothing else — no treasury key, no KeeperHub key)* | `PROCURE_REGISTRY_ADDRESS` / `PROCURE_RPC_URL` — same `ProcurementRegistry` contract, used to broadcast the write. |
+| `RPC_URL` — read-only chain queries, against whichever registry the dashboard most recently marked "active" (in-memory, not an env var). | `PROCURE_KEEPERHUB_API_KEY` / `PROCURE_KEEPERHUB_BASE_URL` / `PROCURE_KEEPERHUB_EXECUTION_MODE` — **this agent's own** KeeperHub org credentials. `./app` never sees these. |
+| *(nothing else — no treasury key, no KeeperHub key)* | `PROCURE_REGISTRY_ADDRESS` / `PROCURE_RPC_URL` — same `ProcurementRegistry` contract, used to broadcast the write. **Must be the same registry address the platform's admin authorized this agent on** (shown in the dashboard's "Target ProcurementRegistry" field) — a mismatch reverts `recordProcurement` with `NotAuthorizedAgent` even though the wallet is authorized, just on a different registry instance. |
 
 The only value that needs to *match* (not be issued by the platform) is
 `AGENT_MCP_API_KEY`/`PROCURE_MCP_API_KEY`, for MCP auth. Everything else —

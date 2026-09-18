@@ -132,7 +132,7 @@ function buildRuntime() {
         // `siwx: { authOnly: true }` above already rejects an unsigned/invalid
         // request before this handler runs, so `auth.address` is guaranteed here.
         if (!isRegistryConfigured()) {
-          throw new Error("registry_not_configured: PROCUREMENT_REGISTRY_ADDRESS is not set");
+          throw new Error("registry_not_configured: no active ProcurementRegistry — an admin must connect a wallet and create/select one in the dashboard first");
         }
         const authorized = await isAgentAuthorizedOnChain(auth!.address as Address);
         if (!authorized) {

@@ -5,6 +5,7 @@ import { Command } from "commander";
 import { loadAgentDemoConfig, type Persona } from "../src/config.ts";
 import { listSkillReferences, loadSkillSummary } from "../src/skills.ts";
 import { runExternalAgent } from "../src/agent.ts";
+import { startWebhookServer } from "../src/server.ts";
 
 const program = new Command();
 
@@ -70,6 +71,22 @@ program
       console.error(`✗ ${(e as Error).message}`);
       process.exitCode = 1;
     }
+  });
+
+program
+  .command("serve")
+  .description(
+    "Run an HTTP listener so ./app's dashboard can dispatch a live webhook to this agent — register http://localhost:<port>/webhook/<platform> as a subscriber in its 'Webhook subscribers' panel. Otherwise identical to the `webhook` command (same signature verification, same agent loop), just triggered over the network instead of a local file.",
+  )
+  .option("--port <port>", "port to listen on", process.env.AGENT_DEMO_PORT || "4021")
+  .option(
+    "--secret <secret>",
+    "shared webhook secret — must match the secret typed into ./app's subscriber form",
+    process.env.DEMO_WEBHOOK_SECRET || "demo-secret",
+  )
+  .action((opts: { port: string; secret: string }) => {
+    const config = loadAgentDemoConfig();
+    startWebhookServer(config, { port: Number(opts.port), secret: opts.secret });
   });
 
 program

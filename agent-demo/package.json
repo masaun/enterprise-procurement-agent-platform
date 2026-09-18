@@ -11,7 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsc",
-    "start": "node bin/agent-demo.ts"
+    "start": "node bin/agent-demo.ts",
+    "serve": "node bin/agent-demo.ts serve"
   },
   "dependencies": {
     "commander": "^12.1.0",

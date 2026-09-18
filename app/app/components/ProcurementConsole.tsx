@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isAddress, type Hex } from "viem";
 import { Timeline } from "@/app/components/Timeline";
 import type { Policy, ProcurementTask, ProviderOffer } from "@/lib/types";
+import { useWallet } from "@/lib/wallet/WalletProvider";
+import { registerAgentIdentityWithConnectedWallet } from "@/lib/identity/registerBrowser";
+import {
+  createProcurementRegistryWithConnectedWallet,
+  getRegistriesByCreatorWithConnectedWallet,
+  isFactoryConfigured,
+} from "@/lib/chain/factoryBrowser";
+import { addAuthorizedAgentWithConnectedWallet, revokeAuthorizedAgentWithConnectedWallet } from "@/lib/chain/registryBrowser";
 
 const DEFAULT_INSTRUCTION =
   "Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.";
@@ -17,6 +26,15 @@ type AuthorizedAgent = {
   verification: { verified: boolean; onChainWallet?: string; reputation?: { count: number; value: number; valueDecimals: number }; reason?: string };
 };
 type IdentityRegistrationResult = { agentId?: string; agentAddress: string; transactionHash: string; transferTransactionHash?: string };
+type CreatedRegistry = { registryAddress: string; owner: string; transactionHash: string; createdAt: string };
+type RegisteredAgent = {
+  agentId?: string;
+  agentAddress: string;
+  agentURI?: string;
+  transactionHash: string;
+  transferTransactionHash?: string;
+  registeredAt: string;
+};
 type OnChainReceipt = {
   taskId: string;
   enterprise: string;
@@ -30,6 +48,7 @@ type OnChainReceipt = {
 };
 
 export function ProcurementConsole() {
+  const wallet = useWallet();
   const [providers, setProviders] = useState<ProviderOffer[] | null>(null);
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [policyDraft, setPolicyDraft] = useState<{ maxUsdPerTask: string; minApyBps: string; allowedAssets: string; allowedProtocols: string } | null>(null);
@@ -51,11 +70,30 @@ export function ProcurementConsole() {
   const [newAgent, setNewAgent] = useState({ address: "", agentId: "" });
   const [addingAgent, setAddingAgent] = useState(false);
   const [agentError, setAgentError] = useState<string | null>(null);
+  // No env-var default here on purpose: with a wallet connected, the target
+  // registry always comes from the factory's own `getRegistryForCreator()`
+  // (`refreshMyRegistry` below) — never a hardcoded address, and always kept
+  // in sync with the connected wallet — so this can't drift from whatever
+  // registry the connected wallet actually owns.
+  const [registryAddress, setRegistryAddress] = useState("");
+
+  const [creatingRegistry, setCreatingRegistry] = useState(false);
+  const [createdRegistry, setCreatedRegistry] = useState<CreatedRegistry | null>(null);
+  const [createRegistryError, setCreateRegistryError] = useState<string | null>(null);
+  // Every ProcurementRegistry the connected wallet has ever created via the
+  // factory's getRegistriesByCreator(), read live on-chain — not just the
+  // one from this session's ephemeral `createdRegistry` above. The deployed
+  // factory (as of writing) doesn't cap this at one, so this can have more
+  // than one entry; the dashboard treats the most recent as the active one.
+  const [ownedRegistries, setOwnedRegistries] = useState<string[] | null>(null);
+  const [loadingMyRegistry, setLoadingMyRegistry] = useState(false);
+  const myRegistry = ownedRegistries && ownedRegistries.length > 0 ? ownedRegistries[ownedRegistries.length - 1] : null;
 
   const [identityDraft, setIdentityDraft] = useState({ agentURI: "", agentWalletAddress: "" });
   const [registeringIdentity, setRegisteringIdentity] = useState(false);
   const [identityResult, setIdentityResult] = useState<IdentityRegistrationResult | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
+  const [registeredAgents, setRegisteredAgents] = useState<RegisteredAgent[] | null>(null);
 
   const [receipts, setReceipts] = useState<OnChainReceipt[] | null>(null);
   const [dispatchedPending, setDispatchedPending] = useState<ProcurementTask[]>([]);
@@ -66,9 +104,67 @@ export function ProcurementConsole() {
     void refreshProviders();
     void refreshPolicy();
     void refreshSubscribers();
-    void refreshAuthorizedAgents();
+    void refreshRegisteredAgents();
     void refreshHistory();
   }, []);
+
+  useEffect(() => {
+    void refreshMyRegistry();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.address]);
+
+  useEffect(() => {
+    // Keeps the server's "active ProcurementRegistry" (lib/chain/activeRegistryStore.ts
+    // — used for on-chain history reads and the inbound agent report gate) in
+    // sync with whatever registry the connected wallet is currently using
+    // here, instead of a hand-configured PROCUREMENT_REGISTRY_ADDRESS.
+    if (!wallet.address || !isAddress(registryAddress)) return;
+    fetch("/api/procurement-registry/active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ registryAddress }),
+    })
+      .then(() => refreshHistory())
+      .catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wallet.address, registryAddress]);
+
+  useEffect(() => {
+    // Both "Authorized agents" tables (the live-gate panel and the
+    // "Authorize Agent" panel) always reflect whichever registry is
+    // currently selected — a live on-chain read when one is, the process
+    // cache otherwise (see GET /api/agents/authorized).
+    void refreshAuthorizedAgents(registryAddress);
+  }, [registryAddress]);
+
+  async function refreshMyRegistry() {
+    if (!wallet.address || !wallet.provider || !isFactoryConfigured()) {
+      setOwnedRegistries(null);
+      return;
+    }
+    setLoadingMyRegistry(true);
+    try {
+      const registries = await getRegistriesByCreatorWithConnectedWallet(wallet.provider, wallet.address);
+      setOwnedRegistries(registries);
+      // The connected wallet's own (most recent) registry is always the
+      // default target — resync unconditionally instead of "fill only if
+      // empty", so switching wallets (or reloading) never leaves a stale
+      // address behind. Clicking another row in the table below can still
+      // pick an older one if the wallet owns more than one.
+      setRegistryAddress(registries[registries.length - 1] ?? "");
+    } catch {
+      setOwnedRegistries(null);
+    } finally {
+      setLoadingMyRegistry(false);
+    }
+  }
+
+  async function refreshRegisteredAgents() {
+    const res = await fetch("/api/agents/identity").catch(() => undefined);
+    if (!res?.ok) return;
+    const body = await res.json();
+    setRegisteredAgents(body.agents ?? []);
+  }
 
   async function refreshProviders() {
     const res = await fetch("/api/providers").catch(() => undefined);
@@ -146,18 +242,44 @@ export function ProcurementConsole() {
     setRegisteringIdentity(true);
     setIdentityError(null);
     setIdentityResult(null);
+    const agentWalletAddress = identityDraft.agentWalletAddress.trim() || undefined;
+    if (agentWalletAddress && !isAddress(agentWalletAddress)) {
+      setIdentityError("Agent Wallet Address is not a valid EVM address");
+      setRegisteringIdentity(false);
+      return;
+    }
     try {
-      const res = await fetch("/api/agents/identity", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agentURI: identityDraft.agentURI,
-          agentWalletAddress: identityDraft.agentWalletAddress || undefined,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.message || "Registration failed");
-      setIdentityResult(body as IdentityRegistrationResult);
+      if (wallet.address) {
+        // A wallet is connected: it signs the mint (and transfer, if
+        // agentWalletAddress differs) directly in the browser, so it pays
+        // its own gas instead of the platform's ENTERPRISE_ADMIN_PRIVATE_KEY.
+        if (!wallet.isOnBaseSepolia) throw new Error("Connected wallet is not on Base Sepolia — use the switch-chain button above first.");
+        if (!wallet.provider) throw new Error("Connected wallet has no active provider");
+        const result = await registerAgentIdentityWithConnectedWallet(
+          wallet.provider,
+          wallet.address,
+          identityDraft.agentURI || undefined,
+          agentWalletAddress as Hex | undefined,
+        );
+        setIdentityResult(result);
+        // The wallet signed this directly in the browser, so the server never
+        // saw it — report it back just for the "registered agents" table.
+        await fetch("/api/agents/identity", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...result, agentURI: identityDraft.agentURI || undefined }),
+        }).catch(() => undefined);
+      } else {
+        const res = await fetch("/api/agents/identity", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ agentURI: identityDraft.agentURI, agentWalletAddress }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.message || "Registration failed");
+        setIdentityResult(body as IdentityRegistrationResult);
+      }
+      void refreshRegisteredAgents();
     } catch (e) {
       setIdentityError((e as Error).message);
     } finally {
@@ -165,11 +287,32 @@ export function ProcurementConsole() {
     }
   }
 
-  async function refreshAuthorizedAgents() {
-    const res = await fetch("/api/agents/authorized").catch(() => undefined);
+  async function refreshAuthorizedAgents(targetRegistry?: string) {
+    const addr = targetRegistry ?? registryAddress;
+    const url = addr && isAddress(addr) ? `/api/agents/authorized?registryAddress=${addr}` : "/api/agents/authorized";
+    const res = await fetch(url).catch(() => undefined);
     if (!res?.ok) return;
     const body = await res.json();
     setAuthorizedAgents(body.agents ?? []);
+  }
+
+  async function createRegistry() {
+    setCreatingRegistry(true);
+    setCreateRegistryError(null);
+    try {
+      if (!wallet.address) throw new Error("Connect a wallet first — it becomes the new registry's owner.");
+      if (!wallet.isOnBaseSepolia) throw new Error("Connected wallet is not on Base Sepolia — use the switch-chain button above first.");
+      if (!wallet.provider) throw new Error("Connected wallet has no active provider");
+      if (myRegistry) throw new Error("This wallet already owns a ProcurementRegistry (shown below) — one per wallet.");
+      const result = await createProcurementRegistryWithConnectedWallet(wallet.provider, wallet.address);
+      setCreatedRegistry({ ...result, createdAt: new Date().toISOString() });
+      setRegistryAddress(result.registryAddress);
+      void refreshMyRegistry();
+    } catch (e) {
+      setCreateRegistryError((e as Error).message);
+    } finally {
+      setCreatingRegistry(false);
+    }
   }
 
   async function addAuthorizedAgent(e: React.FormEvent) {
@@ -177,13 +320,35 @@ export function ProcurementConsole() {
     setAddingAgent(true);
     setAgentError(null);
     try {
-      const res = await fetch("/api/agents/authorized", {
+      // A registry's Ownable owner is always the wallet that created it via
+      // ProcurementRegistryFactory, so only a connected wallet can sign
+      // addAuthorizedAgent() — there is no platform-key fallback.
+      if (!wallet.address) throw new Error("Connect a wallet first — it must be the owner of the target registry below.");
+      if (!wallet.isOnBaseSepolia) throw new Error("Connected wallet is not on Base Sepolia — use the switch-chain button above first.");
+      if (!wallet.provider) throw new Error("Connected wallet has no active provider");
+      if (!isAddress(registryAddress)) throw new Error("Target ProcurementRegistry address is not a valid EVM address");
+      if (!isAddress(newAgent.address)) throw new Error("Agent wallet address is not a valid EVM address");
+
+      const verifyRes = await fetch("/api/agents/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newAgent),
       });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body?.verification?.reason || body?.message || "Verification failed");
+      const verifyBody = await verifyRes.json().catch(() => ({}));
+      if (!verifyRes.ok) throw new Error(verifyBody?.verification?.reason || verifyBody?.message || "Verification failed");
+
+      const transactionHash = await addAuthorizedAgentWithConnectedWallet(
+        wallet.provider,
+        wallet.address,
+        registryAddress as Hex,
+        newAgent.address as Hex,
+      );
+
+      await fetch("/api/agents/authorized/record", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...newAgent, active: true, verification: verifyBody.verification, transactionHash }),
+      }).catch(() => undefined);
       setNewAgent({ address: "", agentId: "" });
       void refreshAuthorizedAgents();
     } catch (e) {
@@ -194,8 +359,24 @@ export function ProcurementConsole() {
   }
 
   async function revokeAgent(address: string) {
-    await fetch(`/api/agents/authorized/${address}`, { method: "DELETE" }).catch(() => undefined);
-    void refreshAuthorizedAgents();
+    setAgentError(null);
+    try {
+      if (!wallet.address) throw new Error("Connect a wallet first — it must be the owner of the target registry above.");
+      if (!wallet.isOnBaseSepolia) throw new Error("Connected wallet is not on Base Sepolia — use the switch-chain button above first.");
+      if (!wallet.provider) throw new Error("Connected wallet has no active provider");
+      if (!isAddress(registryAddress)) throw new Error("Target ProcurementRegistry address is not a valid EVM address");
+
+      await revokeAuthorizedAgentWithConnectedWallet(wallet.provider, wallet.address, registryAddress as Hex, address as Hex);
+      await fetch("/api/agents/authorized/record", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, active: false }),
+      }).catch(() => undefined);
+    } catch (e) {
+      setAgentError((e as Error).message);
+    } finally {
+      void refreshAuthorizedAgents();
+    }
   }
 
   async function refreshHistory() {
@@ -333,20 +514,41 @@ export function ProcurementConsole() {
             ) : subscribers.length === 0 ? (
               <div className="empty">No subscribers yet. Add the agent operator&apos;s webhook URL below.</div>
             ) : (
-              <div>
-                {subscribers.map((s) => (
-                  <div className="provider-row" key={s.id}>
-                    <div className="provider-main">
-                      <div className="provider-name">
-                        {s.name} <span className="badge info">{s.platform}</span>
-                      </div>
-                      <div className="provider-meta mono">{s.url}</div>
-                    </div>
-                    <button className="btn secondary" onClick={() => removeSubscriber(s.id)}>
-                      Remove
-                    </button>
-                  </div>
-                ))}
+              <div className="table-wrap">
+                <table className="simple-table">
+                  <thead>
+                    <tr>
+                      <th>Name</th>
+                      <th>Platform</th>
+                      <th>Webhook URL</th>
+                      <th>Secret</th>
+                      <th>Status</th>
+                      <th>Added</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {subscribers.map((s) => (
+                      <tr key={s.id}>
+                        <td>{s.name}</td>
+                        <td>
+                          <span className="badge info">{s.platform}</span>
+                        </td>
+                        <td className="mono">{s.url}</td>
+                        <td>{s.secret}</td>
+                        <td>
+                          <span className={`badge ${s.active ? "ok" : "muted"}`}>{s.active ? "active" : "inactive"}</span>
+                        </td>
+                        <td>{new Date(s.createdAt).toLocaleString()}</td>
+                        <td>
+                          <button className="btn secondary" onClick={() => removeSubscriber(s.id)}>
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
             <form onSubmit={addSubscriber} style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
@@ -406,12 +608,20 @@ export function ProcurementConsole() {
           <div className="card">
             <h2>Authorize Agent (by Registering in the ERC-8004)</h2>
             <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -4, marginBottom: 12 }}>
-              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry, signed by{" "}
-              <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code>. Enter the agent wallet address to register it for — the
-              identity is minted and then transferred to that address on-chain, so this app never needs the agent
-              wallet&apos;s own private key. Leave it blank to register the <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code>{" "}
-              wallet itself instead. Do this once per agent wallet — the resulting agentId + address are what
-              &quot;Authorized agents&quot; below needs.
+              Mints a new ERC-8004 identity on the Base Sepolia Identity Registry. Enter the agent wallet address to
+              register it for — the identity is minted and then transferred to that address on-chain, so this app
+              never needs the agent wallet&apos;s own private key.{" "}
+              {wallet.address ? (
+                <>
+                  Your connected wallet (<code>{wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}</code>) will
+                  sign and pay gas for this.
+                </>
+              ) : (
+                <>
+                  Signed and gas-paid by <code>ENTERPRISE_ADMIN_PRIVATE_KEY</code> since no wallet is connected —
+                  use &quot;Connect Wallet&quot; above to pay from your own wallet instead.
+                </>
+              )}
             </p>
             <form onSubmit={registerIdentity}>
               <div className="field">
@@ -419,7 +629,11 @@ export function ProcurementConsole() {
                 <input
                   value={identityDraft.agentWalletAddress}
                   onChange={(e) => setIdentityDraft({ ...identityDraft, agentWalletAddress: e.target.value })}
-                  placeholder="0x… (defaults to the ENTERPRISE_ADMIN_PRIVATE_KEY wallet if left blank)"
+                  placeholder={
+                    wallet.address
+                      ? "0x… (defaults to your connected wallet if left blank)"
+                      : "0x… (defaults to the ENTERPRISE_ADMIN_PRIVATE_KEY wallet if left blank)"
+                  }
                 />
               </div>
               <div className="field">
@@ -430,7 +644,7 @@ export function ProcurementConsole() {
                   placeholder="https://.../.well-known/agent-registration.json"
                 />
               </div>
-              <button className="btn secondary" type="submit" disabled={registeringIdentity}>
+              <button className="btn secondary" type="submit" disabled={registeringIdentity || (Boolean(wallet.address) && !wallet.isOnBaseSepolia)}>
                 {registeringIdentity ? <span className="spinner" /> : null}
                 {registeringIdentity ? "Registering on-chain…" : "Register in ERC-8004"}
               </button>
@@ -462,10 +676,240 @@ export function ProcurementConsole() {
                 </div>
               </div>
             ) : null}
+
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+              <label style={{ marginBottom: 8 }}>Agents registered via this panel</label>
+              {registeredAgents === null ? (
+                <div className="empty">Loading…</div>
+              ) : registeredAgents.length === 0 ? (
+                <div className="empty">No ERC-8004 identities registered yet.</div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="simple-table">
+                    <thead>
+                      <tr>
+                        <th>Agent ID</th>
+                        <th>Agent Address</th>
+                        <th>Agent URI</th>
+                        <th>Registered</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {registeredAgents.map((a) => (
+                        <tr key={a.agentId ?? a.agentAddress}>
+                          <td>{a.agentId ?? "—"}</td>
+                          <td className="mono">{a.agentAddress}</td>
+                          <td className="mono">{a.agentURI ?? "—"}</td>
+                          <td>{new Date(a.registeredAt).toLocaleString()}</td>
+                          <td>
+                            <a
+                              className="pill link"
+                              href={`https://sepolia.basescan.org/tx/${a.transferTransactionHash ?? a.transactionHash}`}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              tx
+                            </a>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+              <label style={{ marginBottom: 8 }}>Authorized agents in your ProcurementRegistry (live)</label>
+              {authorizedAgents === null ? (
+                <div className="empty">Loading…</div>
+              ) : authorizedAgents.length === 0 ? (
+                <div className="empty">
+                  No agents authorized yet — authorize one in the &quot;Authorized agents&quot; panel below.
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="simple-table">
+                    <thead>
+                      <tr>
+                        <th>Agent Address</th>
+                        <th>Agent ID</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {authorizedAgents.map((a) => (
+                        <tr key={a.address}>
+                          <td className="mono">{a.address}</td>
+                          <td>{a.agentId}</td>
+                          <td>
+                            <span className={`badge ${a.active ? "ok" : "muted"}`}>{a.active ? "authorized" : "revoked"}</span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <h2>New ProcurementRegistry contract creation</h2>
+            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -4, marginBottom: 12 }}>
+              Deploys a brand-new <code>ProcurementRegistry</code> via <code>ProcurementRegistryFactory</code>
+              &apos;s <code>createNewProcurementRegistry()</code>. Whichever wallet signs this call becomes that
+              registry&apos;s owner on-chain, so it alone can <code>addAuthorizedAgent()</code>/
+              <code>revokeAuthorizedAgent()</code> on it below — no platform key involved. This dashboard treats one
+              registry per wallet as the norm: once your connected wallet owns one, it&apos;s shown below instead of
+              creating another.{" "}
+              {wallet.address ? (
+                <>
+                  Your connected wallet (<code>{wallet.address.slice(0, 6)}…{wallet.address.slice(-4)}</code>) will
+                  sign, pay gas, and own the new registry.
+                </>
+              ) : (
+                <>Connect a wallet above first — this action has no server-signed fallback, since the whole point is wallet ownership.</>
+              )}
+            </p>
+            <button
+              className="btn secondary"
+              onClick={() => void createRegistry()}
+              disabled={creatingRegistry || !wallet.address || !wallet.isOnBaseSepolia || !isFactoryConfigured() || Boolean(myRegistry)}
+            >
+              {creatingRegistry ? <span className="spinner" /> : null}
+              {creatingRegistry ? "Deploying…" : "Create new ProcurementRegistry"}
+            </button>
+            {!isFactoryConfigured() ? (
+              <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>
+                <code>NEXT_PUBLIC_PROCUREMENT_REGISTRY_FACTORY_ADDRESS</code> is not set — deploy{" "}
+                <code>ProcurementRegistryFactory</code> (see <code>contracts/scripts/DeployProcurementRegistryFactory.s.sol</code>)
+                and set it in <code>app/.env.local</code>.
+              </p>
+            ) : null}
+            {createRegistryError ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{createRegistryError}</p> : null}
+            {createdRegistry ? (
+              <div className="provider-row" style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+                <div className="provider-main">
+                  <div className="provider-name">
+                    Deployed <span className="badge ok">owner {createdRegistry.owner.slice(0, 6)}…{createdRegistry.owner.slice(-4)}</span>
+                  </div>
+                  <div className="provider-meta mono">{createdRegistry.registryAddress}</div>
+                </div>
+                <a
+                  className="pill link"
+                  href={`https://sepolia.basescan.org/tx/${createdRegistry.transactionHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  tx
+                </a>
+              </div>
+            ) : null}
+
+            <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border-soft)" }}>
+              <label style={{ marginBottom: 8 }}>Your ProcurementRegistry</label>
+              {!wallet.address ? (
+                <div className="empty">Connect a wallet to see the registry/registries it owns.</div>
+              ) : loadingMyRegistry && !ownedRegistries ? (
+                <div className="empty">Reading from the factory…</div>
+              ) : !ownedRegistries || ownedRegistries.length === 0 ? (
+                <div className="empty">No registry deployed yet for this wallet — create one above.</div>
+              ) : (
+                <div className="table-wrap">
+                  <table className="simple-table">
+                    <thead>
+                      <tr>
+                        <th>Registry address</th>
+                        <th>Owner (your wallet)</th>
+                        <th>Active</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ownedRegistries.map((addr, i) => {
+                        const isActive = addr.toLowerCase() === registryAddress.toLowerCase();
+                        const ownerAddress = wallet.address as string;
+                        return (
+                          <tr key={addr}>
+                            <td className="mono">
+                              {addr}
+                              {i === ownedRegistries.length - 1 ? " (latest)" : ""}
+                            </td>
+                            <td className="mono">
+                              {ownerAddress.slice(0, 6)}…{ownerAddress.slice(-4)}
+                            </td>
+                            <td>
+                              {isActive ? (
+                                <span className="badge ok">active</span>
+                              ) : (
+                                <button type="button" className="btn secondary" onClick={() => setRegistryAddress(addr)}>
+                                  Use this one
+                                </button>
+                              )}
+                            </td>
+                            <td>
+                              <a className="pill link" href={`https://sepolia.basescan.org/address/${addr}`} target="_blank" rel="noreferrer">
+                                view
+                              </a>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="card">
             <h2>Authorized agents (live ERC-8004 gate)</h2>
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label>Target ProcurementRegistry</label>
+              <input
+                value={registryAddress}
+                onChange={(e) => setRegistryAddress(e.target.value)}
+                placeholder="0x… (auto-filled from your connected wallet's registry)"
+                className="mono"
+              />
+            </div>
+            {wallet.address && isFactoryConfigured() ? (
+              <div style={{ marginBottom: 12 }}>
+                {loadingMyRegistry && !ownedRegistries ? (
+                  <p style={{ color: "var(--text-faint)", fontSize: 11.5, margin: 0 }}>Reading your registries from the factory…</p>
+                ) : !ownedRegistries || ownedRegistries.length === 0 ? (
+                  <p style={{ color: "var(--text-faint)", fontSize: 11.5, margin: 0 }}>
+                    No registry found on-chain for this wallet via <code>ProcurementRegistryFactory.getRegistriesByCreator()</code> —
+                    create one in the panel above.
+                  </p>
+                ) : !ownedRegistries.some((addr) => addr.toLowerCase() === registryAddress.toLowerCase()) ? (
+                  <p style={{ color: "var(--warning, #b58900)", fontSize: 11.5, margin: 0 }}>
+                    This address isn&apos;t one of your wallet&apos;s own registries (
+                    <button type="button" className="pill link" onClick={() => setRegistryAddress(myRegistry ?? "")} title={myRegistry ?? undefined}>
+                      {myRegistry ? `${myRegistry.slice(0, 6)}…${myRegistry.slice(-4)}` : "use latest"}
+                    </button>
+                    ) — you can only sign writes on a registry you own.
+                  </p>
+                ) : (
+                  <p style={{ color: "var(--text-faint)", fontSize: 11.5, margin: 0 }}>
+                    ✓ one of your wallet&apos;s registries, per <code>ProcurementRegistryFactory.getRegistriesByCreator()</code>
+                  </p>
+                )}
+              </div>
+            ) : null}
+            <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginTop: -6, marginBottom: 12 }}>
+              {wallet.address ? (
+                <>
+                  Your connected wallet signs <code>addAuthorizedAgent()</code>/<code>revokeAuthorizedAgent()</code>{" "}
+                  directly on the registry above — it must be that registry&apos;s owner. No server-signed
+                  fallback — a registry&apos;s owner is always the wallet that created it via the factory.
+                </>
+              ) : (
+                <>Connect a wallet above first — this action has no server-signed fallback, since the whole point is wallet ownership.</>
+              )}
+            </p>
             {authorizedAgents === null ? (
               <div className="empty">Loading…</div>
             ) : authorizedAgents.length === 0 ? (
@@ -484,7 +928,7 @@ export function ProcurementConsole() {
                       </div>
                     </div>
                     {a.active ? (
-                      <button className="btn secondary" onClick={() => revokeAgent(a.address)}>
+                      <button className="btn secondary" onClick={() => revokeAgent(a.address)} disabled={!wallet.address}>
                         Revoke
                       </button>
                     ) : null}
@@ -501,7 +945,7 @@ export function ProcurementConsole() {
                 <label>ERC-8004 agentId</label>
                 <input value={newAgent.agentId} onChange={(e) => setNewAgent({ ...newAgent, agentId: e.target.value })} required />
               </div>
-              <button className="btn secondary" type="submit" disabled={addingAgent}>
+              <button className="btn secondary" type="submit" disabled={addingAgent || !wallet.address}>
                 {addingAgent ? "Verifying on-chain…" : "Verify & authorize"}
               </button>
               {agentError ? <p style={{ color: "var(--danger)", fontSize: 12, marginTop: 8 }}>{agentError}</p> : null}
@@ -514,8 +958,8 @@ export function ProcurementConsole() {
             </h2>
             {!registryConfigured ? (
               <p style={{ color: "var(--text-faint)", fontSize: 11.5, marginBottom: 12 }}>
-                <code>PROCUREMENT_REGISTRY_ADDRESS</code> not set — on-chain history unavailable until{" "}
-                <code>./contracts</code> is deployed.
+                No active <code>ProcurementRegistry</code> yet — on-chain history is unavailable until a wallet
+                connects above and creates/selects one in the &quot;Authorized agents&quot; panel.
               </p>
             ) : null}
             {dispatchedPending.length > 0 ? (

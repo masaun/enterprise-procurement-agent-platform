@@ -2,13 +2,22 @@ import { createPublicClient, createWalletClient, http, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { baseSepolia } from "viem/chains";
 import { createIdentityRegistryClient, getRegistryAddress } from "@lucid-agents/identity";
+import { mintAndMaybeTransferIdentity, type IdentityRegistrationResult } from "./registerCore";
+
+export type { IdentityRegistrationResult };
 
 /**
- * Mints a new ERC-8004 identity (an ERC-721 token, via the Identity
- * Registry's `register()`) — backs the dashboard's "Authorize Agent (by
- * Registering in the ERC-8004)" panel, upstream of the existing "Authorized
- * agents" panel (`lib/identity/gate.ts` / `lib/chain/registry.ts`), which
- * assumes an identity already exists.
+ * Server-side fallback for minting a new ERC-8004 identity (an ERC-721
+ * token, via the Identity Registry's `register()`) — backs the dashboard's
+ * "Authorize Agent (by Registering in the ERC-8004)" panel, upstream of the
+ * existing "Authorized agents" panel (`lib/identity/gate.ts` /
+ * `lib/chain/registry.ts`), which assumes an identity already exists.
+ *
+ * Used only when the admin hasn't connected a wallet via "Connect Wallet" —
+ * when one is connected, the panel instead signs and pays gas with that
+ * wallet directly in the browser (`lib/identity/registerBrowser.ts`), and
+ * this route/function is never called. The mint+transfer mechanics are
+ * shared between both paths via `registerCore.ts`.
  *
  * `register()` mints the token to whichever address signs the transaction
  * (see `@lucid-agents/identity`'s implementation) — it has no "mint to this
@@ -20,12 +29,13 @@ import { createIdentityRegistryClient, getRegistryAddress } from "@lucid-agents/
  * from the `ENTERPRISE_ADMIN_PRIVATE_KEY` signer to that address — no private
  * key for the target wallet is ever needed by this app.
  *
- * `ENTERPRISE_ADMIN_PRIVATE_KEY` is a THIRD key, distinct from the other two
- * already in play (named for what it actually is — the enterprise admin's
- * own signer, not any particular agent's — unlike its predecessor
- * `AGENT_IDENTITY_PRIVATE_KEY`, which implied it had to be an agent's key):
- * - `CONTRACT_OWNER_PRIVATE_KEY` (`lib/chain/registry.ts`) — the platform's
- *   own signer, administers `ProcurementRegistry`'s allowlist only.
+ * `ENTERPRISE_ADMIN_PRIVATE_KEY` is distinct from the other keys in play
+ * (named for what it actually is — the enterprise admin's own signer, not
+ * any particular agent's — unlike its predecessor `AGENT_IDENTITY_PRIVATE_KEY`,
+ * which implied it had to be an agent's key):
+ * - `ProcurementRegistry`'s `authorizedAgents` allowlist has no platform key
+ *   at all — it's administered exclusively by whichever connected wallet
+ *   owns that registry (see `lib/chain/registryBrowser.ts`).
  * - The external agent's own wallet (`PROCURE_PRIVATE_KEY`, never held by
  *   this app) — executes procurements and writes receipts.
  * - `ENTERPRISE_ADMIN_PRIVATE_KEY` (used here) only mints + (when
@@ -49,13 +59,6 @@ export function isIdentityRegistrationConfigured(): boolean {
   return Boolean(process.env.ENTERPRISE_ADMIN_PRIVATE_KEY);
 }
 
-export type IdentityRegistrationResult = {
-  agentId?: string;
-  agentAddress: Hex;
-  transactionHash: Hex;
-  transferTransactionHash?: Hex;
-};
-
 export async function registerAgentIdentity(agentURI?: string, agentWalletAddress?: Hex): Promise<IdentityRegistrationResult> {
   const key = process.env.ENTERPRISE_ADMIN_PRIVATE_KEY;
   if (!key) throw new Error("ENTERPRISE_ADMIN_PRIVATE_KEY is not set.");
@@ -73,22 +76,5 @@ export async function registerAgentIdentity(agentURI?: string, agentWalletAddres
     walletClient,
   });
 
-  const result = await identityRegistry.register(agentURI ? { agentURI } : undefined);
-
-  let transferTransactionHash: Hex | undefined;
-  let agentAddress = result.agentAddress;
-  if (agentWalletAddress && agentWalletAddress.toLowerCase() !== result.agentAddress.toLowerCase()) {
-    if (result.agentId === undefined) {
-      throw new Error("Minted the identity but could not read back its agentId, so it can't be transferred to agentWalletAddress.");
-    }
-    transferTransactionHash = await identityRegistry.transfer(agentWalletAddress, result.agentId);
-    agentAddress = agentWalletAddress;
-  }
-
-  return {
-    agentId: result.agentId !== undefined ? result.agentId.toString() : undefined,
-    agentAddress,
-    transactionHash: result.transactionHash,
-    transferTransactionHash,
-  };
+  return mintAndMaybeTransferIdentity(identityRegistry, account.address, agentURI, agentWalletAddress);
 }

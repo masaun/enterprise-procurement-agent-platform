@@ -60,13 +60,12 @@ button {
 
 .topbar {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   padding-bottom: 20px;
   border-bottom: 1px solid var(--border-soft);
   margin-bottom: 24px;
-  flex-wrap: wrap;
 }
 
 .brand {
@@ -87,8 +86,10 @@ button {
 
 .pillrow {
   display: flex;
+  align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: center;
 }
 
 .pill {
@@ -375,6 +376,42 @@ textarea {
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.simple-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.simple-table th,
+.simple-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+}
+
+.simple-table th {
+  color: var(--text-faint);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.simple-table td.mono {
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+.simple-table tr:last-child td {
+  border-bottom: none;
+}
+
+.table-wrap {
+  overflow-x: auto;
 }
 
 .empty {

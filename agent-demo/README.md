@@ -77,12 +77,31 @@ cp .env.example .env   # fill in OPENROUTER_API_KEY at minimum
 node bin/agent-demo.ts skills
 ```
 
+To let `./app`'s dashboard dispatch a **live** webhook to this agent (instead
+of simulating one from a local file), start its HTTP listener instead — see
+[Commands](#commands) and
+[Live wire](#live-wire-registering-agent-demo-as-a-webhook-subscriber) below:
+
+```bash
+node bin/agent-demo.ts serve   # or: npm run serve
+# [server] agent-demo webhook listener up on http://localhost:4021
+# [server] register one of these as a "Webhook subscribers" URL in ./app, matching the platform you pick there:
+# [server]   hermes   -> http://localhost:4021/webhook/hermes
+# [server]   openclaw -> http://localhost:4021/webhook/openclaw
+# [server]   generic  -> http://localhost:4021/webhook/generic
+# [server] secret must match too — this server expects: demo-secret
+```
+
+Leave it running in its own terminal; every subsequent dispatch from `./app`
+triggers a fresh agent run, logged there.
+
 ## Commands
 
 | Command | Description |
 | --- | --- |
 | `agent-demo skills` | Loads only `agent-skills/SKILL.md`'s `name` + `description` and prints them, plus the list of `references/*.md` available on demand — step 1 of progressive disclosure, with no LLM call. |
-| `agent-demo webhook --platform <hermes\|openclaw\|generic> --payload <file\|-> [--secret <secret>]` | Simulates this agent receiving a signed webhook on the given platform's route (see `fixtures/webhook-*.json` for one example payload per platform) and reasoning over it end to end. The command signs the payload itself first, exactly the way `./app`'s dispatcher would (`app/lib/webhooks/dispatch.ts`), then hands the signed request to the agent loop, which independently re-verifies it with the same secret via its own `verify_webhook_signature` tool — so the full sign/verify round trip is demonstrated without needing a live `./app` instance running the dispatch side. |
+| `agent-demo webhook --platform <hermes\|openclaw\|generic> --payload <file\|-> [--secret <secret>]` | Simulates this agent receiving a signed webhook on the given platform's route (see `fixtures/webhook-*.json` for one example payload per platform) and reasoning over it end to end. The command signs the payload itself first, exactly the way `./app`'s dispatcher would (`app/lib/webhooks/dispatch.ts`), then hands the signed request to the agent loop, which independently re-verifies it with the same secret via its own `verify_webhook_signature` tool — reading the raw bytes/headers/secret directly from that trigger, not from anything the LLM retypes (see [the troubleshooting section below](#troubleshooting-webhook-signature-verification-always-fails-fixed)) — so the full sign/verify round trip is demonstrated without needing a live `./app` instance running the dispatch side. |
+| `agent-demo serve [--port <port>] [--secret <secret>]` | Runs a real HTTP listener (`src/server.ts`) so `./app`'s dashboard can dispatch a **live** webhook to this agent instead of you simulating one from a file — see [Live wire](#live-wire-registering-agent-demo-as-a-webhook-subscriber) below. Exposes `POST /webhook/<hermes\|openclaw\|generic>`; each route hands the raw request straight to the same agent loop `webhook` uses, so verification/reasoning/`procure` are unchanged. `POST /` (the bare URL, no path) also works, with the platform inferred from whichever signature header shows up — useful since that's the most natural URL to paste into the subscriber form. |
 | `agent-demo instruct "<text>"` | Simulates a human enterprise admin telling this agent directly, no webhook involved — e.g. `agent-demo instruct "Move 2 USDC to an approved lending protocol, but only if APY > 1%."` |
 
 Every run logs each step to stdout: which skill loaded, each LLM turn, every
@@ -98,7 +117,7 @@ node bin/agent-demo.ts webhook --platform generic --payload fixtures/webhook-gen
 [skill] loaded at startup: "agent-skills" — Teaches an external enterprise agent...
 [skill] task matches this skill's description -> activating, reading full SKILL.md body
 [llm] calling openai/gpt-4o-mini via OpenRouter (turn 1/12)
-[llm] requested tool call: verify_webhook_signature({"platform":"generic",...})
+[llm] requested tool call: verify_webhook_signature({})
 [tool] verify_webhook_signature(platform=generic)
 [llm] calling openai/gpt-4o-mini via OpenRouter (turn 2/12)
 [llm] requested tool call: run_procure({"command":"act","stdin":"..."})
@@ -143,7 +162,12 @@ skipped, per `agent-skills/README.md`.)
    OpenClaw's `Authorization: Bearer <secret>`, and the generic
    `X-Procurement-Signature-256` HMAC — `src/tools.ts`'s
    `verify_webhook_signature` tool implements all three with a
-   constant-time comparison.
+   constant-time comparison. The tool itself takes no arguments: it computes
+   the HMAC over the raw body/headers/secret from the actual `AgentTrigger`
+   (`src/agent.ts`, threaded into `ToolContext.trigger`), not from values the
+   LLM would otherwise have to retype into its own tool call — see
+   [Troubleshooting: webhook signature verification always fails](#troubleshooting-webhook-signature-verification-always-fails-fixed)
+   for why that distinction matters.
 
 ## Persona
 
@@ -166,7 +190,8 @@ agent runtime you're demoing against.
 | `AGENT_DEMO_MAX_TOOL_ITERATIONS` | Safety cap on the tool-calling loop. | `12` |
 | `AGENT_SKILLS_DIR` | Override the path to `./agent-skills` (defaults to the sibling directory). | `../agent-skills` |
 | `PROCURE_CLI_BIN` | Override the path to `procure`'s `bin/procure.ts` (defaults to the bundled one). | `../agent-skills/scripts/cli/bin/procure.ts` |
-| `DEMO_WEBHOOK_SECRET` | Default `--secret` for the `webhook` command. | `demo-secret` |
+| `DEMO_WEBHOOK_SECRET` | Default `--secret` for both the `webhook` and `serve` commands — for `serve`, must match the secret typed into `./app`'s "Webhook subscribers" form. | `demo-secret` |
+| `AGENT_DEMO_PORT` | Default `--port` for `agent-demo serve`. | `4021` |
 | `PROCURE_BASE_URL`, `PROCURE_PRIVATE_KEY`, `PROCURE_MCP_API_KEY`, `PROCURE_KEEPERHUB_API_KEY`, `PROCURE_KEEPERHUB_BASE_URL`, `PROCURE_KEEPERHUB_EXECUTION_MODE`, `PROCURE_REGISTRY_ADDRESS`, `PROCURE_RPC_URL` | Passed straight through (inherited process env) to the shelled-out `procure` CLI — same variables, same meaning as [`agent-skills/README.md#environment-variables`](../agent-skills/README.md#environment-variables). This agent never reads or holds these itself; it only launches a process that does. | see `agent-skills/README.md` |
 
 ## Wiring `./app`'s dashboard UI to this demo agent
@@ -187,10 +212,9 @@ flowchart LR
 
     P1 -->|"read by"| Agent
     P2 -->|"POST /api/procurement-intents\nrecords intent, then dispatches"| P3
-    P3 -.->|"signed webhook POST\n(NO listener exists here today)"| Agent["agent-demo\n(this package)"]
+    P3 -->|"signed webhook POST\n(agent-demo serve listening)"| Agent["agent-demo\n(this package)"]
     Agent -.->|"recordProcurement()\nrequires prior authorization"| P4
 
-    style P3 stroke-dasharray: 5 5
     style P4 stroke-dasharray: 5 5
 ```
 
@@ -200,7 +224,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | 1 | **KeeperHub policy** | Indirectly — this agent fetches it read-only via `GET /api/agent/entrypoints/policy/invoke` once it acts. | Already seeded from `app/.env.local`: Max USD/task `2`, Min APY `1.00`, Allowed assets `USDC`, Allowed protocols `aave-v3` only. Matches `fixtures/webhook-generic.json` — leave as-is. |
 | 2 | **Procurement intent** | Only via panel 3's dispatch — doesn't execute anything itself. | Instruction `Move 2 USDC from our treasury to an approved lending protocol, but only if APY > 1%.`, Asset `USDC`, Amount `2`, Min APY `1.0` (all defaults). |
-| 3 | **Webhook subscribers** | **No** — see below. | N/A as a live wire; see the two-step flow below instead. |
+| 3 | **Webhook subscribers** | **Yes**, if `agent-demo serve` is running — see below. | Name: anything; Platform: `generic` (or `hermes`/`openclaw`); URL: `http://localhost:4021/webhook/generic` (match the port/path to your platform choice); Secret: same value as `DEMO_WEBHOOK_SECRET` (`demo-secret` by default). |
 | 4 | **Authorized agents** | N/A (this is `./app` gating *incoming* on-chain writes from any agent, not something this package calls) | Needs real on-chain setup before it accepts anything meaningful — see below. |
 
 ### Why "Allowed protocols" is restricted to `aave-v3`
@@ -244,70 +268,77 @@ from the eligible set entirely, so the sort has only one candidate left —
 the one gateway with a real, verified Base Sepolia contract — and the run
 can complete the KeeperHub step instead of failing on it deterministically.
 
-### Why "Webhook subscribers" doesn't reach `agent-demo`
+### Live wire: registering `agent-demo` as a Webhook subscriber
 
-`agent-demo` has **no HTTP listener**. Its `webhook` command only
-*simulates* receiving a signed POST by reading a local JSON file
-(`bin/agent-demo.ts`) — there is no server-side route to type a URL for.
-Whatever URL you put in the dashboard's "Webhook subscribers" panel, the
-UI's dispatch will attempt to POST to it and get nothing back, because
-nothing is listening.
+`agent-demo serve` runs a real HTTP listener (`src/server.ts`), so the
+dashboard's "Dispatch to subscribed agents" button can wake this agent up
+directly — no manual file-copying step required.
 
 ```mermaid
 sequenceDiagram
     participant Admin as Human admin
     participant UI as ./app dashboard
     participant Sub as Webhook subscribers list
-    participant Demo as agent-demo (this package)
+    participant Demo as agent-demo serve (this package)
 
-    Note over Admin,Demo: What the dashboard's "Dispatch" button actually does
+    Note over Admin,Demo: One-time setup
+    Admin->>Demo: node bin/agent-demo.ts serve --port 4021
+    Admin->>UI: Add subscriber (platform=generic, url=http://localhost:4021/webhook/generic, secret=demo-secret)
+
+    Note over Admin,Demo: Every dispatch from here on is live
     Admin->>UI: Fill policy + intent, click Dispatch
     UI->>Sub: POST /api/procurement-intents
-    Sub-->>Demo: signed webhook POST — X FAILS, no listener exists
-
-    Note over Admin,Demo: What actually drives agent-demo (a separate, manual step)
-    Admin->>Demo: node bin/agent-demo.ts webhook --payload fixtures/webhook-generic.json
+    Sub->>Demo: signed webhook POST -> POST /webhook/generic
+    Demo-->>Sub: 202 Accepted (immediately)
     Demo->>Demo: verify_webhook_signature, LLM decides, run_procure
 ```
 
-The demo is intentionally **two decoupled steps**, not a live UI-click-to-agent
-wire:
-
 | Step | Where | Command / action |
 | --- | --- | --- |
-| 1 | `./app` dashboard | Set policy + describe the intent (leave "Webhook subscribers" empty — you'll see "no active webhook subscribers to dispatch to", which is expected). |
-| 2 | `agent-demo/` (separate terminal) | `node bin/agent-demo.ts webhook --platform generic --payload fixtures/webhook-generic.json --secret demo-secret` — signs the payload the same way `app/lib/webhooks/dispatch.ts` would, then feeds it to the agent loop, which independently re-verifies the signature and decides whether/how to act. |
+| 1 | `agent-demo/` (separate terminal) | `node bin/agent-demo.ts serve --port 4021 --secret demo-secret` (or just `npm run serve` — both default to `AGENT_DEMO_PORT`/`DEMO_WEBHOOK_SECRET` from `.env`). Leave it running; every subsequent dispatch from `./app` triggers a fresh agent run, logged to this terminal. |
+| 2 | `./app` dashboard, "Webhook subscribers" panel | Add a subscriber: Platform `generic` (or `hermes`/`openclaw` — pick whichever persona you set `AGENT_DEMO_PERSONA` to, since that shapes the signature scheme this agent expects), URL `http://localhost:4021/webhook/generic`, Secret `demo-secret` (must exactly match `DEMO_WEBHOOK_SECRET`). |
+| 3 | `./app` dashboard, "Procurement intent" panel | Fill in the instruction/asset/amount/min APY, click "Dispatch to subscribed agents." The dashboard reports `Dispatched to 1/1 subscriber(s)`; watch the `agent-demo serve` terminal for the full trace (skill load, LLM turns, tool calls, final report). |
 
-To make step 3 a *real*, live wire (dashboard click -> `agent-demo` wakes up
-automatically), you'd need to add a small HTTP receiver in front of this
-package — not part of this repo today — that accepts the dashboard's POST,
-writes the body to a temp file, and shells out to
-`node bin/agent-demo.ts webhook --payload <that file> --secret <shared secret>`.
+The response the dashboard sees is a `202 Accepted` sent back immediately on
+receipt — `dispatchToSubscriber` (`app/lib/webhooks/dispatch.ts`) only checks
+that the POST succeeded, it doesn't wait for the agent's reasoning loop to
+finish, since that (OpenRouter turns + shelling out to `procure`) can run
+well past a typical webhook timeout. The actual outcome shows up as a
+`ProcurementRegistry` receipt on `./app`'s "Activity & receipts" panel once
+`run_procure act` completes, same as the manual `webhook` command.
+
+The manual, file-based flow (`agent-demo webhook --payload
+fixtures/webhook-generic.json`) still works exactly as before and remains
+useful for a scripted/deterministic run that doesn't depend on a listener
+being up — the two are interchangeable front doors to the same agent loop.
 
 ### "Authorized agents (live ERC-8004 gate)" — what's required first
 
-This panel isn't a free-text field either: `POST /api/agents/authorized`
+This panel isn't a free-text field either, and it only works with a wallet
+connected in the dashboard (top of the page) — there's no server-signed
+fallback, since a `ProcurementRegistry`'s owner is always the wallet that
+created it via `ProcurementRegistryFactory` (see
+[`contracts/README.md`](../contracts/README.md)). `POST /api/agents/verify`
 runs a **live on-chain check** (`app/lib/identity/gate.ts`) that the
 `agentId` you enter really resolves, on the ERC-8004 Identity Registry
-(Base Sepolia), to the wallet `address` you enter — only then does it get
-added to `ProcurementRegistry`'s on-chain allowlist.
+(Base Sepolia), to the wallet `address` you enter; only then does the
+connected wallet itself sign `addAuthorizedAgent()` on the target registry.
 
 ```mermaid
 flowchart TB
-    Admin["Human admin\ntypes address + agentId"] --> API["POST /api/agents/authorized"]
-    API --> Cfg{"PROCUREMENT_REGISTRY_ADDRESS\n+ CONTRACT_OWNER_PRIVATE_KEY\nset in app/.env.local?"}
-    Cfg -->|"no (today's state)"| Fail1["503 registry_not_configured"]
-    Cfg -->|yes| Gate["gate.ts: verifyAgentOnChain(agentId, address)"]
-    Gate --> IdReg["ERC-8004 Identity Registry\n(Base Sepolia)\ngetAgentWallet(agentId)"]
-    IdReg -->|"wallet != address"| Fail2["403 verification_failed"]
-    IdReg -->|"wallet == address"| Allow["addAuthorizedAgent(address)\non ProcurementRegistry"]
-    Allow --> Ready["agent-demo's own wallet\ncan now recordProcurement()"]
+    Admin["Human admin, wallet connected\ntypes address + agentId"] --> Verify["POST /api/agents/verify"]
+    Verify --> Gate["gate.ts: verifyAgentOnChain(agentId, address)"]
+    Gate --> IdReg["ERC-8004 Identity Registry\n(Base Sepolia)\nowner of agentId"]
+    IdReg -->|"owner != address"| Fail2["403 verification_failed"]
+    IdReg -->|"owner == address"| Allow["Connected wallet signs\naddAuthorizedAgent(address)\non the Target ProcurementRegistry"]
+    Allow --> Active["POST /api/procurement-registry/active\n(dashboard keeps this in sync automatically)"]
+    Active --> Ready["Whichever registry is active,\nagent-demo's wallet can now recordProcurement() on it"]
 ```
 
 | Requirement | Current state | Needed to unblock |
 | --- | --- | --- |
-| `PROCUREMENT_REGISTRY_ADDRESS` in `app/.env.local` | **Missing** — panel returns `503` | Set to the deployed contract, `0xDf33FdF3360fCF1923aBb8C7e3cE3c51160c7623` (see root [`README.md`](../README.md#deployed-contracts)). |
-| `CONTRACT_OWNER_PRIVATE_KEY` in `app/.env.local` | **Missing** | Set to the key that deployed/owns `ProcurementRegistry.sol` — administers the allowlist only, never touches treasury funds. |
+| A wallet connected in the dashboard, owning a `ProcurementRegistry` | **Depends on your session** | Connect **MetaMask**/**Rabby Wallet** at the top of the dashboard, then use "New ProcurementRegistry contract creation" to deploy one via `ProcurementRegistryFactory.createNewProcurementRegistry()` (deployed at the factory address in root [`README.md`](../README.md#deployed-contracts)) if you don't already own one. |
+| `PROCURE_REGISTRY_ADDRESS` in `agent-demo/.env` matching the registry you authorized the agent on | **Must be checked manually** | Copy the exact address shown in the dashboard's "Target ProcurementRegistry" field (or the "Your registries" pill you used) into `agent-demo/.env`'s `PROCURE_REGISTRY_ADDRESS` — a mismatch here is the classic cause of `recordProcurement` reverting with `NotAuthorizedAgent` even though the wallet *is* authorized, just on a different registry instance. |
 | `PROCURE_PRIVATE_KEY` in `agent-demo/.env` | **Set** (a fixed EOA, not a throwaway-per-run key) | Needs Base Sepolia ETH for gas — see the troubleshooting section below; it has none yet. |
 | An `agentId` registered to that wallet on the ERC-8004 Identity Registry | **Does not exist yet** | Set `ENTERPRISE_ADMIN_PRIVATE_KEY` in `app/.env.local` (any funded Base Sepolia key — it no longer has to match `PROCURE_PRIVATE_KEY`), then use the dashboard's "Authorize Agent (by Registering in the ERC-8004)" panel (`POST /api/agents/identity`), entering `PROCURE_PRIVATE_KEY`'s address in the panel's **Agent Wallet Address** field, to mint the identity — it returns the `agentId` + wallet address, and a "Use below ↓" button pre-fills the "Authorized agents" form beneath it. (Previously this required running `@lucid-agents/identity`'s `createAgentIdentity`/`identity()` by hand; the panel productizes that step.) |
 
@@ -326,9 +357,112 @@ transfers the resulting identity on-chain to whatever address is entered as
 | Must equal | Nothing — any funded Base Sepolia key works; it only pays gas | The wallet whose identity gets registered and later authorized — enter its address in the panel's **Agent Wallet Address** field |
 | In production | Would normally *not* be held here at all — the agent operator would register their own identity and just hand the platform the resulting `agentId`/address (see [`app/README.md`](../app/README.md)'s server/caller-secrets table) | Always lives with the agent, never with the platform |
 
-Until all four rows are done, the "Authorized agents" panel — and therefore
-`agent-demo`'s (or `procure`'s) on-chain `recordProcurement()` write and its
-`report/invoke` call — will fail.
+Until all four rows above are done, the "Authorized agents" panel — and
+therefore `agent-demo`'s (or `procure`'s) on-chain `recordProcurement()`
+write and its `report/invoke` call — will fail.
+
+## Troubleshooting: `agent-demo serve` doesn't react to a dispatch
+
+If clicking "Dispatch to subscribed agents" in `./app` produces no output at
+all in the `agent-demo serve` terminal — not even a `[server] ✗ ...` warning
+line — the POST likely never reached the process:
+
+1. **Is `agent-demo serve` actually running, on the port you registered?**
+   `curl http://localhost:4021/health` should return `{"ok":true}`. If it
+   hangs or refuses, the server isn't up (or is on a different port than the
+   subscriber URL says).
+2. **Did the app's dispatch even fire?** Check the dashboard's response after
+   clicking dispatch — `Dispatched to 0/1 subscriber(s)` (vs. `1/1`) means
+   the fetch itself failed (wrong host/port, or nothing listening). `no
+   active webhook subscribers to dispatch to` means the subscriber list is
+   empty or every entry has `active: false`.
+3. **Wrong path, silently swallowed by an older build.** Both `POST /` (the
+   bare URL) and `POST /webhook/<hermes|openclaw|generic>` are valid routes
+   — but if you registered some other path (a typo, or a stale URL from
+   before this repo added `/webhook/:platform`), the server responds `404`
+   and, as of this fix, logs `[server] ✗ <method> <path> — no matching
+   route`. If you don't see that line either, you're running an older build
+   of `src/server.ts` that 404'd silently — restart `agent-demo serve` to
+   pick up the current code.
+
+The most common concrete cause: an admin pastes the bare origin
+(`http://localhost:4021`) into the subscriber form, since that's what's
+easiest to type/remember. That's intentionally supported (see the `serve`
+row in [Commands](#commands)) — the platform is inferred from whichever
+signature header shows up on the request — but it only works with a server
+new enough to have that fallback, so restart `agent-demo serve` after
+pulling this repo if you were already running it.
+
+## Troubleshooting: webhook signature verification always fails (fixed)
+
+Once `agent-demo serve` is correctly receiving the dispatch (see above), the
+LLM's final report could still be a flat refusal, even with the *correct*
+secret configured on both sides:
+
+```
+[llm] final report:
+Webhook signature verification failed. The x-procurement-signature-256
+header does not match the expected HMAC-SHA256 of the raw body using the
+shared secret demo-secret.
+
+Action refused — I will not process this procurement intent until a valid
+signature is received.
+```
+
+This was never a secret/config mismatch — `app/lib/webhooks/dispatch.ts`
+(the sender) and `src/tools.ts`'s `verifyGeneric`/`verifyHermes`/
+`verifyOpenClaw` (the verifier) always agreed on the secret, the header name,
+and the `sha256=<hex>` prefix format. The bug was in *how* the verifier's
+inputs reached it:
+
+```mermaid
+flowchart TB
+    subgraph Before["Before: LLM retypes the raw body"]
+        B1["server.ts captures the exact\nraw request bytes"] --> B2["agent.ts's describeTrigger()\nsplices rawBody into a plain-text\nuser-message prompt"]
+        B2 --> B3["LLM reads the prompt, then must\nretype rawBody as a JSON string\ninside its own tool-call arguments"]
+        B3 --> B4["verify_webhook_signature(args.rawBody, ...)\nHMACs whatever the LLM retyped"]
+        B4 --> B5["Any reformatting (whitespace,\nkey order, quoting) the LLM\nintroduces changes the HMAC entirely"]
+        B5 --> BFail["verified: false\n— even for a legitimately\nsigned webhook"]
+    end
+
+    subgraph After["After: tool reads the actual trigger"]
+        A1["server.ts captures the exact\nraw request bytes"] --> A2["runExternalAgent passes the\nsame AgentTrigger object into\nctx.trigger for every tool call"]
+        A2 --> A3["verify_webhook_signature takes\nno arguments — executeTool reads\nrawBody/headers/secret from ctx.trigger"]
+        A3 --> APass["HMAC computed over the exact\nbytes the sender signed, every time"]
+    end
+
+    style BFail stroke:#c0392b
+    style APass stroke:#27ae60
+```
+
+The raw JSON body reaches the LLM only as text inside a natural-language
+prompt (`describeTrigger()` in `src/agent.ts`); asking it to reproduce that
+same JSON byte-for-byte inside a *different* JSON context (its own tool-call
+arguments) has no such guarantee — a model commonly "cleans up" whitespace,
+reorders keys, or normalizes quoting while transcribing. HMAC-SHA256 changes
+completely on a single byte of drift, so any of that turned a legitimately
+signed webhook into a failed verification, deterministically, every time —
+not an intermittent flake.
+
+| File | Change |
+| --- | --- |
+| [`src/tools.ts`](src/tools.ts) | `ToolContext` gained a `trigger?: AgentTrigger` field. `verify_webhook_signature`'s tool schema now takes **no arguments** (`properties: {}`) instead of `platform`/`rawBody`/`secret`/`signatureHeader`/`timestampHeader`. `executeTool`'s handler for it now reads `platform`, `rawBody`, `headers`, `secret` straight from `ctx.trigger` and looks up the right header per platform (`x-webhook-signature-v2`/`x-webhook-timestamp` for hermes, `authorization` for openclaw, `x-procurement-signature-256` for generic) instead of trusting any LLM-supplied argument. |
+| [`src/agent.ts`](src/agent.ts) | The `executeTool(...)` call in the tool-calling loop now passes `trigger` through in its `ctx` object, so every tool call — not just this one — has access to the actual trigger data if it needs it. |
+
+The LLM still *decides* when to call `verify_webhook_signature` (the system
+prompt still tells it to, first, for a webhook trigger) and still sees the
+raw body/secret/headers in its prompt for its own situational awareness —
+it's just no longer the one supplying the bytes the HMAC is actually computed
+over.
+
+**If you still see the old symptom after pulling this fix**, check the tool
+call the LLM actually requested in the log: `verify_webhook_signature({})`
+means the fix is live; `verify_webhook_signature({"platform":"generic",
+"rawBody":"...", "secret":"...", "signatureHeader":"..."})` means the running
+`agent-demo serve` process was started *before* this fix — `node
+bin/agent-demo.ts serve` has no hot-reload, so editing `src/tools.ts` has no
+effect on an already-running process. Stop it (Ctrl+C) and start it again
+(`npm run serve` or `node bin/agent-demo.ts serve`) to pick up the fix.
 
 ## Troubleshooting: a live `webhook`/`instruct` run exhausts its tool-call budget
 
@@ -513,7 +647,7 @@ leave it with `ERC20: transfer amount exceeds balance` on `supply()`:
 
 | Token | Address (Base Sepolia) | Used for | Faucet |
 | --- | --- | --- | --- |
-| **Aave test USDC** (`USDC_UNDERLYING`, Aave's own Base Sepolia market) | [`0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f`](https://sepolia.basescan.org/address/0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f) | **This is the one that matters here** — hardcoded as the `asset` in the Aave v3 offer's `supplyContract.argsTemplate` (see [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts)), so it's what KeeperHub's `supply()` call on the Aave Pool (`0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27`) actually pulls from `onBehalfOf`. | Aave's Base Sepolia `Faucet` contract at [`0xd9145B5F45Ad4519C7aCCD6e0a4A82e83bb8A6DC`](https://sepolia.basescan.org/address/0xd9145b5f45ad4519c7accd6e0a4a82e83bb8a6dc) — see below. |
+| **Aave test USDC** (`USDC_UNDERLYING`, Aave's own Base Sepolia market) | [`0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f`](https://sepolia.basescan.org/address/0xba50cd2a20f6da35d788639e581bca8d0b5d4d5f) | **This is the one that matters here** — hardcoded as the `asset` in the Aave v3 offer's `supplyContract.argsTemplate` (see [`app/lib/lucid/mock-providers.ts`](../app/lib/lucid/mock-providers.ts)), so it's what KeeperHub's `supply()` call on the Aave Pool (`0x8bAB6d1b75f19e9eD9fCe8b9BD338844fF79aE27`) actually pulls from `onBehalfOf`. | Aave's Base Sepolia `Faucet` contract at [`0xD9145b5F45Ad4519c7ACcD6E0A4A82e83bB8A6Dc`](https://sepolia.basescan.org/address/0xd9145b5f45ad4519c7accd6e0a4a82e83bb8a6dc) — see below. |
 | **Circle USDC** (Circle's official Base Sepolia deployment) | [`0x036CbD53842c5426634e7929541eC2318f3dCF7e`](https://sepolia.basescan.org/address/0x036cbd53842c5426634e7929541ec2318f3dcf7e) | Not used by this platform's Aave path — listed here only because it's the USDC address most Base Sepolia tooling/tutorials reference, and it's easy to confuse with the one above. | [Circle faucet](https://faucet.circle.com/) — pick "Base Sepolia", paste your address. |
 
 If KeeperHub's wallet ends up holding Circle USDC instead of Aave's test
@@ -529,7 +663,7 @@ gas-funded wallet, minting to *any* recipient address, no private key for
 the recipient needed:
 
 ```
-Faucet:     0xd9145B5F45Ad4519C7aCCD6e0a4A82e83bb8A6DC
+Faucet:     0xD9145b5F45Ad4519c7ACcD6E0A4A82e83bB8A6Dc
 USDC token: 0xba50Cd2A20f6DA35D788639E581bca8d0B5d4D5f
 
 Faucet.mint(

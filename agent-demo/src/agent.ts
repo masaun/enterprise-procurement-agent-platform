@@ -71,7 +71,7 @@ export async function runExternalAgent(config: AgentDemoConfig, trigger: AgentTr
       log(`[llm] requested tool call: ${call.function.name}(${call.function.arguments})`);
       let resultContent: string;
       try {
-        resultContent = executeTool(call.function.name, call.function.arguments, { config, log });
+        resultContent = executeTool(call.function.name, call.function.arguments, { config, log, trigger });
       } catch (err) {
         resultContent = JSON.stringify({ error: (err as Error).message });
       }
@@ -96,7 +96,7 @@ function describeTrigger(trigger: AgentTrigger): string {
     `Headers: ${JSON.stringify(trigger.headers)}`,
     `Raw body: ${trigger.rawBody}`,
     `The webhook secret you (this agent) registered with the enterprise admin for this route is: ${trigger.secret}`,
-    "Verify the signature before acting on it, per agent-skills/references/protocols.md's 'Webhook signing' table.",
+    "Call verify_webhook_signature before acting on it (it takes no arguments — it checks this actual trigger directly, per agent-skills/references/protocols.md's 'Webhook signing' table).",
     trigger.platform === "generic"
       ? "This is the generic schema `procure act` expects verbatim on stdin — once verified, call `run_procure` with command \"act\" and stdin set to the raw body."
       : "Once verified, extract the procurement intent from this platform's payload shape and act via `run_procure` with command \"act\" (pass the equivalent generic-shaped JSON as stdin) or \"submit\" with explicit flags.",

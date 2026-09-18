@@ -48,9 +48,16 @@ export async function verifyAgentOnChain(agentId: string, expectedAddress: Addre
     publicClient,
   });
 
+  // `getAgentWallet()` reads a distinct, opt-in "agentWallet" metadata field
+  // that only `setAgentWallet()` (a signature-gated call this app never
+  // makes) can set — it stays the zero address even for identities this app
+  // *did* mint and transfer. `get().owner`, backed by `ownerOf`, is what the
+  // mint/transfer flow (`registerCore.ts`) actually updates, so it's the
+  // correct source of truth for "who currently controls this agentId".
   let onChainWallet: Address | undefined;
   try {
-    onChainWallet = await identityRegistry.getAgentWallet(agentId);
+    const record = await identityRegistry.get(agentId);
+    onChainWallet = record?.owner as Address | undefined;
   } catch (err) {
     return { verified: false, agentId, reason: `Identity registry lookup failed: ${(err as Error).message}` };
   }
@@ -60,7 +67,7 @@ export async function verifyAgentOnChain(agentId: string, expectedAddress: Addre
       verified: false,
       agentId,
       onChainWallet,
-      reason: `Registered wallet for agentId ${agentId} (${onChainWallet ?? "none"}) does not match the SIWX-authenticated address (${expectedAddress}).`,
+      reason: `Owner of agentId ${agentId} (${onChainWallet ?? "none"}) does not match the SIWX-authenticated address (${expectedAddress}).`,
     };
   }
 

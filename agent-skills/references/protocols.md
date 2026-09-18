@@ -128,21 +128,26 @@ composes the SDK's raw registry-client primitives:
 
 ```ts
 const identityRegistry = createIdentityRegistryClient({ address, chainId, publicClient });
-const onChainWallet = await identityRegistry.getAgentWallet(agentId);
-// reject unless onChainWallet === the SIWX-authenticated address
+const record = await identityRegistry.get(agentId);
+// reject unless record.owner === the SIWX-authenticated address
+// (not getAgentWallet() — that's a separate, signature-gated field this
+// platform's registration flow never sets; ownerOf() is what mint+transfer
+// actually updates)
 
 const reputationRegistry = createReputationRegistryClient({ address, chainId, publicClient, identityRegistryAddress });
 const summary = await reputationRegistry.getSummary(BigInt(agentId)); // informational only
 ```
 
 This runs once, when the enterprise admin adds you via the dashboard's
-"Authorized agents" panel (`POST /api/agents/authorized { address, agentId }`)
-— your `agentId` must actually resolve on-chain to the wallet address you
-gave. On success, the platform calls
-`ProcurementRegistry.addAuthorizedAgent(address)` (`./contracts`), which is
-what your later `recordProcurement` and `report` calls are checked against.
-This is a one-time setup step per agent wallet, not something you do per
-task.
+"Authorized agents" panel, with their wallet connected there (it must own
+the target `ProcurementRegistry`): `POST /api/agents/verify { address,
+agentId }` checks that your `agentId` actually resolves on-chain to the
+wallet address you gave, then their connected wallet itself signs
+`ProcurementRegistry.addAuthorizedAgent(address)` (`./contracts`) — no
+platform-held key does this. That allowlist entry is what your later
+`recordProcurement` and `report` calls are checked against, **on that same
+registry** (make sure your own `PROCURE_REGISTRY_ADDRESS` matches it). This
+is a one-time setup step per agent wallet, not something you do per task.
 
 ## AP2 (Agent Payments Protocol) commerce roles
 

@@ -3,11 +3,12 @@ import { getTask, listTasks } from "@/lib/store";
 
 /**
  * The dashboard's activity/receipt history — merges the on-chain
- * `ProcurementRecorded` log (the durable source of truth, once
- * `PROCUREMENT_REGISTRY_ADDRESS` is set) with whatever rich detail
- * (timeline, policy evaluation) the reporting agent POSTed to `lib/store.ts`
- * for the same `taskId`. Also includes still-`dispatched` intents that
- * haven't come back with an on-chain receipt yet.
+ * `ProcurementRecorded` log (the durable source of truth, once a connected
+ * wallet has created/selected a registry — see
+ * `lib/chain/activeRegistryStore.ts`) with whatever rich detail (timeline,
+ * policy evaluation) the reporting agent POSTed to `lib/store.ts` for the
+ * same `taskId`. Also includes still-`dispatched` intents that haven't come
+ * back with an on-chain receipt yet.
  */
 export async function GET() {
   const dispatchedOnly = listTasks().filter((t) => t.status === "dispatched");

@@ -1,47 +1,52 @@
-import { verifyAgentOnChain } from "@/lib/identity/gate";
-import { addAuthorizedAgentOnChain, isRegistryConfigured } from "@/lib/chain/registry";
-import { listAuthorizedAgents, upsertAuthorizedAgent } from "@/lib/identity/authorizedAgentsStore";
-import type { Address } from "viem";
+import { isAddress, type Address } from "viem";
+import { readAuthorizedAgentsOnChain } from "@/lib/chain/registry";
+import { getAuthorizedAgent, listAuthorizedAgents } from "@/lib/identity/authorizedAgentsStore";
 
 /**
  * Admin-only platform route (not an agent-facing Lucid entrypoint) backing
- * the dashboard's "Authorized agents" panel. `POST` is the live ERC-8004
- * gate: it verifies `agentId` really resolves to `address` on the ERC-8004
- * Identity Registry (see `lib/identity/gate.ts`), and only on success adds
- * `address` to `ProcurementRegistry`'s on-chain allowlist — the contract
- * itself never has to know the ERC-8004 registries' ABI.
+ * the dashboard's "Authorized agents" tables (both the live-gate panel and
+ * the "Authorize Agent" panel). There is no `POST`/`DELETE` here anymore: a
+ * `ProcurementRegistry`'s `Ownable` owner is always the wallet that created
+ * it via `ProcurementRegistryFactory` (see `lib/chain/factoryBrowser.ts`),
+ * so `addAuthorizedAgent()`/`revokeAuthorizedAgent()` can only be signed by
+ * that connected wallet (`lib/chain/registryBrowser.ts`, verified first via
+ * `POST /api/agents/verify`) — never a platform-held key. `POST
+ * /api/agents/authorized/record` records the display effect of those
+ * browser-signed writes into `authorizedAgentsStore`.
+ *
+ * With `?registryAddress=0x...`, the list is read live from that registry's
+ * on-chain `AgentAuthorized`/`AgentRevoked` history and current
+ * `authorizedAgents` mapping (see `readAuthorizedAgentsOnChain`) — the
+ * authoritative source, unaffected by a server restart wiping the cache or
+ * by another wallet's registry ever having shared this process. Cached
+ * `authorizedAgentsStore` records (keyed by address) are merged in only for
+ * their extra display metadata (`agentId`, verification/reputation). Without
+ * a `registryAddress` (e.g. no wallet connected yet), it falls back to the
+ * cache alone.
  */
-export async function GET() {
-  return Response.json({ agents: listAuthorizedAgents() });
-}
+export async function GET(request: Request) {
+  const registryAddress = new URL(request.url).searchParams.get("registryAddress");
 
-export async function POST(request: Request) {
-  const body = await request.json().catch(() => ({}));
-  const address = typeof body.address === "string" ? body.address : undefined;
-  const agentId = typeof body.agentId === "string" ? body.agentId : undefined;
-
-  if (!address || !agentId) {
-    return Response.json({ error: "invalid_request", message: "address and agentId are required" }, { status: 400 });
+  if (registryAddress && isAddress(registryAddress)) {
+    try {
+      const onChain = await readAuthorizedAgentsOnChain(registryAddress as Address);
+      const agents = onChain
+        .map(({ address, active }) => {
+          const cached = getAuthorizedAgent(address);
+          return {
+            address,
+            agentId: cached?.agentId ?? "unknown",
+            active,
+            addedAt: cached?.addedAt ?? new Date(0).toISOString(),
+            verification: cached?.verification ?? { verified: true, agentId: cached?.agentId ?? "unknown" },
+          };
+        })
+        .sort((a, b) => b.addedAt.localeCompare(a.addedAt));
+      return Response.json({ agents, source: "chain" });
+    } catch (e) {
+      return Response.json({ agents: listAuthorizedAgents(), source: "cache", error: (e as Error).message });
+    }
   }
-  if (!isRegistryConfigured()) {
-    return Response.json({ error: "registry_not_configured", message: "PROCUREMENT_REGISTRY_ADDRESS is not set" }, { status: 503 });
-  }
 
-  const verification = await verifyAgentOnChain(agentId, address as Address);
-  if (!verification.verified) {
-    return Response.json({ error: "verification_failed", verification }, { status: 403 });
-  }
-
-  const transactionHash = await addAuthorizedAgentOnChain(address as Address);
-
-  const record = {
-    address,
-    agentId,
-    active: true,
-    verification,
-    addedAt: new Date().toISOString(),
-  };
-  upsertAuthorizedAgent(record);
-
-  return Response.json({ ...record, transactionHash });
+  return Response.json({ agents: listAuthorizedAgents(), source: "cache" });
 }
