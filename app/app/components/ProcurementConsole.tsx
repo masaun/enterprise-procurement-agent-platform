@@ -671,12 +671,12 @@ export function ProcurementConsole() {
                         <td>
                           {t.onChainTransactionHash ? (
                             <a
-                              className="pill link"
+                              className="pill link mono"
                               href={`https://sepolia.basescan.org/tx/${t.onChainTransactionHash}`}
                               target="_blank"
                               rel="noreferrer"
                             >
-                              tx
+                              {t.onChainTransactionHash.slice(0, 10)}…
                             </a>
                           ) : (
                             "—"
@@ -711,8 +711,8 @@ export function ProcurementConsole() {
                         <td className="mono">{r.agent ? `${r.agent.slice(0, 6)}…${r.agent.slice(-4)}` : "—"}</td>
                         <td>
                           {r.transactionHash ? (
-                            <a className="pill link" href={`https://sepolia.basescan.org/tx/${r.transactionHash}`} target="_blank" rel="noreferrer">
-                              tx
+                            <a className="pill link mono" href={`https://sepolia.basescan.org/tx/${r.transactionHash}`} target="_blank" rel="noreferrer">
+                              {r.transactionHash.slice(0, 10)}…
                             </a>
                           ) : (
                             "—"

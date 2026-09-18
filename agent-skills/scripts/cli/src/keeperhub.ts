@@ -163,11 +163,28 @@ export async function checkApyAndExecuteSupply(
   // surfaced, instead of throwing — an uncaught TypeError here previously
   // propagated all the way up through orchestrate.ts uncaught, crashing the
   // whole `procure act`/`submit` call with no useful message.
+
+  // `checkAndExecute`'s own response never carries the broadcast tx hash —
+  // that only shows up on a follow-up status poll (`DirectExecutionStatus`).
+  // Without this, every real (non-demo) execution reported "completed" with
+  // no tx hash at all, leaving the dashboard's "Activity & receipts" Tx
+  // column (and the task detail page) with nothing to link to BaseScan.
+  let transactionHash: string | undefined;
+  if (result.executed && result.executionId) {
+    try {
+      const statusResult = await executor.getStatus(result.executionId);
+      transactionHash = statusResult.transactionHash;
+    } catch {
+      // Best-effort — the on-chain receipt write below still records status/asset/amount either way.
+    }
+  }
+
   return {
     mode: "direct",
     executed: result.executed,
     executionId: result.executionId,
     status: result.status ?? (result.executed ? "success" : result.condition ? "skipped" : "error"),
+    transactionHash,
     condition: result.condition
       ? {
           met: result.condition.met,
